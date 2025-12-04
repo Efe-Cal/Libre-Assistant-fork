@@ -5,7 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2025-12-04
+
+### Added
+- Vector embeddings to detirmine memory relevance to query (only related memories are appended to model context)
+- 'isGlobal' tag for memories, designating whether the memory should always be appended or only appended when relevant to the query
+- 'new chat' shorthand button in top bar
+- Revamped message form UI
+- Polished button UI
+
+### Fixed
+- Several UI bugs
+- Chats storage/creation
+- Model selection
 
 ## [0.1.0] - 2025-11-25
 
