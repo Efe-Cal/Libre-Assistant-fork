@@ -35,6 +35,8 @@ const inputMessage = ref("");
 const textareaRef = ref(null); // Ref for the textarea element
 const messageFormRoot = ref(null); // Ref for the root element
 const fileInputRef = ref(null); // Ref for the hidden file input
+const isDragging = ref(false); // Track drag state for visual feedback
+const isProcessingFiles = ref(false); // Track file processing state for loading indicator
 
 // --- Attachments ---
 const {
@@ -461,6 +463,129 @@ async function handleFileSelect(event) {
   event.target.value = '';
 }
 
+/**
+ * Checks if a file is an allowed type (image or PDF)
+ * @param {File} file - The file to check
+ * @returns {boolean}
+ */
+function isAllowedFileType(file) {
+  const imageTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
+  const pdfTypes = ['application/pdf'];
+  const extension = file.name.split('.').pop()?.toLowerCase();
+  
+  // PDFs are always allowed
+  if (pdfTypes.includes(file.type) || extension === 'pdf') {
+    return true;
+  }
+  
+  // Images require vision support
+  if (imageTypes.includes(file.type) || ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(extension)) {
+    return supportsVision.value;
+  }
+  
+  return false;
+}
+
+/**
+ * Handles paste event to support pasting images/PDFs from clipboard
+ * @param {ClipboardEvent} event - The paste event
+ */
+async function handlePaste(event) {
+  if (props.isLoading) return;
+  
+  const items = event.clipboardData?.items;
+  if (!items) return;
+  
+  const filesToAdd = [];
+  
+  for (const item of items) {
+    if (item.kind === 'file') {
+      const file = item.getAsFile();
+      if (file && isAllowedFileType(file)) {
+        filesToAdd.push(file);
+      }
+    }
+  }
+  
+  // Only prevent default if we found files to add
+  if (filesToAdd.length > 0) {
+    event.preventDefault();
+    isProcessingFiles.value = true;
+    try {
+      for (const file of filesToAdd) {
+        await addFile(file, supportsVision.value);
+      }
+    } finally {
+      isProcessingFiles.value = false;
+    }
+  }
+}
+
+/**
+ * Handles dragenter event
+ * @param {DragEvent} event - The drag event
+ */
+function handleDragEnter(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  isDragging.value = true;
+}
+
+/**
+ * Handles dragover event
+ * @param {DragEvent} event - The drag event
+ */
+function handleDragOver(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  isDragging.value = true;
+}
+
+/**
+ * Handles dragleave event
+ * @param {DragEvent} event - The drag event
+ */
+function handleDragLeave(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  
+  // Only set isDragging to false if we're leaving the container entirely
+  // Check if the related target is outside our drop zone
+  const rect = event.currentTarget.getBoundingClientRect();
+  const x = event.clientX;
+  const y = event.clientY;
+  
+  if (x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom) {
+    isDragging.value = false;
+  }
+}
+
+/**
+ * Handles drop event for drag-and-drop file uploads
+ * @param {DragEvent} event - The drop event
+ */
+async function handleDrop(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  isDragging.value = false;
+  
+  if (props.isLoading) return;
+  
+  const files = Array.from(event.dataTransfer?.files || []);
+  const filesToAdd = files.filter(file => isAllowedFileType(file));
+  
+  if (filesToAdd.length > 0) {
+    isProcessingFiles.value = true;
+    try {
+      for (const file of filesToAdd) {
+        await addFile(file, supportsVision.value);
+      }
+    } finally {
+      isProcessingFiles.value = false;
+    }
+  }
+}
+
 // Expose the setMessage function to be called from the parent component
 defineExpose({ setMessage, toggleReasoning, setReasoningEffort, $el: messageFormRoot });
 </script>
@@ -477,7 +602,14 @@ defineExpose({ setMessage, toggleReasoning, setReasoningEffort, $el: messageForm
       @change="handleFileSelect"
     />
 
-    <div class="input-area-wrapper">
+    <div 
+      class="input-area-wrapper"
+      :class="{ 'drag-over': isDragging }"
+      @dragenter="handleDragEnter"
+      @dragover="handleDragOver"
+      @dragleave="handleDragLeave"
+      @drop="handleDrop"
+    >
       <!-- Attachment error message -->
       <div v-if="attachmentError" class="attachment-error">
         <Icon icon="material-symbols:error-outline" width="16" height="16" />
@@ -488,7 +620,12 @@ defineExpose({ setMessage, toggleReasoning, setReasoningEffort, $el: messageForm
       </div>
 
       <!-- Attachment previews -->
-      <div v-if="hasAttachments" class="attachment-preview-row">
+      <div v-if="hasAttachments || isProcessingFiles" class="attachment-preview-row">
+        <!-- Processing indicator -->
+        <div v-if="isProcessingFiles" class="attachment-preview processing">
+          <div class="processing-spinner"></div>
+          <span class="attachment-name">Processing...</span>
+        </div>
         <div
           v-for="attachment in attachments"
           :key="attachment.id"
@@ -504,8 +641,16 @@ defineExpose({ setMessage, toggleReasoning, setReasoningEffort, $el: messageForm
         </div>
       </div>
 
-      <textarea ref="textareaRef" v-model="inputMessage" :disabled="isLoading" @keydown.enter="handleEnterKey"
-        placeholder="Type your message..." class="chat-textarea" rows="1"></textarea>
+      <textarea 
+        ref="textareaRef" 
+        v-model="inputMessage" 
+        :disabled="isLoading" 
+        @keydown.enter="handleEnterKey"
+        @paste="handlePaste"
+        placeholder="Type your message..." 
+        class="chat-textarea" 
+        rows="1"
+      ></textarea>
 
       <div class="input-actions">
         <!-- Attachment button (plus icon) - PDFs work with any model, images require vision -->
@@ -556,7 +701,7 @@ defineExpose({ setMessage, toggleReasoning, setReasoningEffort, $el: messageForm
             <span class="model-name-truncate">{{ props.selectedModelName }}</span>
           </button>
 
-          <button type="submit" class="action-btn send-btn" :disabled="(!trimmedMessage && !hasAttachments) && !isLoading"
+          <button type="submit" class="action-btn send-btn" :disabled="!trimmedMessage && !isLoading"
             @click="handleActionClick" :aria-label="isLoading ? 'Stop generation' : 'Send message'">
             <Icon v-if="!isLoading" icon="material-symbols:arrow-upward-rounded" width="22" height="22" />
             <Icon v-else icon="material-symbols:stop-rounded" width="22" height="22" />
@@ -602,6 +747,12 @@ defineExpose({ setMessage, toggleReasoning, setReasoningEffort, $el: messageForm
   box-shadow: var(--shadow-default);
   position: relative;
   z-index: 10;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.input-area-wrapper.drag-over {
+  border-color: var(--primary);
+  background-color: var(--primary-50, rgba(79, 70, 229, 0.05));
 }
 
 .chat-textarea {
@@ -926,5 +1077,27 @@ defineExpose({ setMessage, toggleReasoning, setReasoningEffort, $el: messageForm
 .attachment-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Processing indicator styles */
+.attachment-preview.processing {
+  background-color: var(--bg-secondary, var(--bg-input));
+  border-style: dashed;
+}
+
+.processing-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>
