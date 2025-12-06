@@ -6,12 +6,17 @@ export async function createConversation(plainMessages, lastUpdated) {
 
   // Ensure that the messages are in a format suitable for storage,
   // Without this, an error occurs.
+  // Use JSON.parse(JSON.stringify()) to deep clone and remove Vue reactive proxies
   let rawMessages = plainMessages.map((msg) => ({
     id: msg.id, // Include all necessary properties
     role: msg.role,
     content: msg.content,
     timestamp: msg.timestamp, // Date objects are fine here
     complete: msg.complete,
+    // Add attachments for user messages (deep clone to remove reactive proxies)
+    ...(msg.role === "user" && msg.attachments && msg.attachments.length > 0 && {
+      attachments: JSON.parse(JSON.stringify(msg.attachments)),
+    }),
     // Add reasoning properties for assistant messages
     ...(msg.role === "assistant" && {
       reasoning: msg.reasoning,
@@ -27,6 +32,8 @@ export async function createConversation(plainMessages, lastUpdated) {
       completionTime: msg.completionTime,
       // Token counting
       tokenCount: msg.tokenCount,
+      // Annotations for reuse
+      annotations: msg.annotations ? JSON.parse(JSON.stringify(msg.annotations)) : null,
     }),
     // Add any other properties your message objects might have
   }));
@@ -133,12 +140,17 @@ export async function storeMessages(
     return;
   }
 
+  // Use JSON.parse(JSON.stringify()) to deep clone and remove Vue reactive proxies
   let rawMessages = plainMessages.map((msg) => ({
     id: msg.id, // Include all necessary properties
     role: msg.role,
     content: msg.content,
     timestamp: msg.timestamp, // Date objects are fine here
     complete: msg.complete,
+    // Add attachments for user messages (deep clone to remove reactive proxies)
+    ...(msg.role === "user" && msg.attachments && msg.attachments.length > 0 && {
+      attachments: JSON.parse(JSON.stringify(msg.attachments)),
+    }),
     // Add reasoning properties for assistant messages
     ...(msg.role === "assistant" && {
       reasoning: msg.reasoning,
@@ -154,6 +166,8 @@ export async function storeMessages(
       completionTime: msg.completionTime,
       // Token counting
       tokenCount: msg.tokenCount,
+      // Annotations for reuse
+      annotations: msg.annotations ? JSON.parse(JSON.stringify(msg.annotations)) : null,
     }),
     // Add any other properties your message objects might have
   }));

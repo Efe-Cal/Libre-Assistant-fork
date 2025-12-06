@@ -514,7 +514,30 @@ defineExpose({ scrollToEnd, isAtBottom, chatWrapper });
               </details>
 
               <div class="bubble">
-                <div v-if="message.role == 'user'">{{ message.content }}</div>
+                <div v-if="message.role == 'user'" class="user-message-content">
+                  <!-- Display attached files -->
+                  <div v-if="message.attachments?.length" class="message-attachments">
+                    <div 
+                      v-for="attachment in message.attachments" 
+                      :key="attachment.id"
+                      class="attachment-thumbnail"
+                      :class="attachment.type"
+                    >
+                      <img 
+                        v-if="attachment.type === 'image'"
+                        :src="attachment.dataUrl" 
+                        :alt="attachment.filename"
+                        loading="lazy"
+                      />
+                      <div v-else class="pdf-attachment">
+                        <Icon icon="material-symbols:picture-as-pdf" width="24" height="24" />
+                        <span class="pdf-filename">{{ attachment.filename }}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- Message text -->
+                  <div v-if="message.content" class="user-text">{{ message.content }}</div>
+                </div>
                 <div v-else-if="message.complete" class="markdown-content"
                   v-html="renderMessageContent(message.content, message.executed_tools || [])"></div>
                 <div v-else>
@@ -891,5 +914,64 @@ defineExpose({ scrollToEnd, isAtBottom, chatWrapper });
   width: 100%;
   box-sizing: border-box;
   align-items: center;
+}
+
+/* --- MESSAGE ATTACHMENTS --- */
+.user-message-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.user-text {
+  white-space: pre-wrap;
+}
+
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.attachment-thumbnail {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.attachment-thumbnail.image img {
+  max-width: 250px;
+  max-height: 250px;
+  object-fit: contain;
+  border-radius: 8px;
+  display: block;
+}
+
+.attachment-thumbnail.pdf {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+}
+
+.pdf-attachment {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pdf-attachment svg {
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.pdf-filename {
+  font-size: 0.85rem;
+  max-width: 150px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.9;
 }
 </style>

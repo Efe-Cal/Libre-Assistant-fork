@@ -84,12 +84,19 @@ export function useConversation() {
   );
 
   // Function to create a new conversation with an initial message and trigger AI response
-  async function createNewConversationWithMessage(initialMessage) {
+  async function createNewConversationWithMessage(initialMessage, attachments = []) {
     // First, add the initial user message to the current messages array
     const initialUserMessage = {
       id: Date.now().toString(36) + Math.random().toString(36).substr(2, 9),
       role: "user",
       content: initialMessage,
+      attachments: attachments.map(a => ({
+        id: a.id,
+        type: a.type,
+        filename: a.filename,
+        dataUrl: a.dataUrl,
+        mimeType: a.mimeType
+      })),
       timestamp: new Date(),
       complete: true,
     };
@@ -194,6 +201,9 @@ export function useConversation() {
         : { effort: savedReasoningEffort }
     };
 
+    // Get attachments from the existing user message (if any)
+    const userMessageAttachments = lastMessage?.attachments || [];
+
     try {
       // Pass only the conversation history BEFORE the current user message
       // handleIncomingMessage will add the current user message itself via the query parameter
@@ -202,7 +212,8 @@ export function useConversation() {
         messageContent,
         messages.value.filter(msg => msg.complete && msg.content !== messageContent).map(msg => ({
           role: msg.role,
-          content: msg.content
+          content: msg.content,
+          annotations: msg.annotations  // Pass annotations for PDF reuse
         })),
         controller.value,
         settingsManager.settings.selected_model_id,
@@ -210,7 +221,8 @@ export function useConversation() {
         settingsManager.settings,
         selectedModelDetails.extra_functions || [],
         settingsManager.settings.parameter_config?.grounding ?? DEFAULT_PARAMETERS.grounding,
-        isIncognito.value // Use current incognito state
+        isIncognito.value, // Use current incognito state
+        userMessageAttachments  // Pass attachments to API
       );
 
       // Track if we've received the first token

@@ -58,6 +58,14 @@ const MEMORY_AWARENESS = `### Memory Awareness
   - deleteMemory(fact): Remove a specific fact from memory
 *   Use these tools when the user explicitly asks you to remember something or when you identify important information that should be retained.`;
 
+const MEMORY_AWARENESS_NO_TOOLS = `### Memory Awareness
+*   You have a global memory system that remembers important facts about the user across conversations.
+*   Memories are categorized as either **global** (always relevant) or **local** (contextually relevant):
+  - **Global memories**: Style preferences, basic user information - always included in context
+  - **Local memories**: Specific facts filtered by semantic relevance to the current query
+*   Only memories relevant to the current conversation are automatically included to optimize context usage.
+*   **Note**: You cannot modify memories yourself. If the user asks you to remember something, politely inform them that you can see their memories but cannot modify them directly.`;
+
 const TABLE_LIMITATION_GUIDELINES = `### Table Usage Guidelines
 *   Limit your use of tables as much as possible.
 *   Consider using lists, bullet points, or plain text as alternatives to tables when possible.`;
@@ -75,13 +83,15 @@ const TABLE_LIMITATION_GUIDELINES = `### Table Usage Guidelines
  * @param {boolean} [settings.gpt_oss_limit_tables] - Whether to limit table usage for GPT-OSS models.
  * @param {string[]} [memoryFacts=[]] - Array of memory facts about the user.
  * @param {boolean} [isIncognito=false] - Whether incognito mode is enabled.
+ * @param {boolean} [hasToolUse=true] - Whether the model supports tool use.
  * @returns {string} The final, complete system prompt.
  **/
 export async function generateSystemPrompt(
   toolNames = [],
   settings = {},
   memoryFacts = [],
-  isIncognito = false
+  isIncognito = false,
+  hasToolUse = true
 ) {
   // Start with the core identity and main principles.
   const promptSections = [CORE_IDENTITY];
@@ -145,7 +155,8 @@ ${memoryFacts.map((fact) => `- ${fact}`).join("\\n")}
 
   // Add memory awareness if enabled and not in incognito mode
   if (global_memory_enabled && !isIncognito) {
-    promptSections.push(MEMORY_AWARENESS);
+    // Use the appropriate memory awareness section based on tool use capability
+    promptSections.push(hasToolUse ? MEMORY_AWARENESS : MEMORY_AWARENESS_NO_TOOLS);
   }
 
   // **Tools Section (Conditional)**

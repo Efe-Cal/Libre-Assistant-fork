@@ -82,16 +82,17 @@ const {
 } = useConversation();
 
 // Override sendMessage to create conversation and navigate immediately
-async function sendMessage(message, originalMessage = null) {
-  if (!message.trim() || isLoading.value) return;
+async function sendMessage(message, originalMessage = null, attachments = []) {
+  if ((!message.trim() && attachments.length === 0) || isLoading.value) return;
 
   if (isIncognito.value) {
     // If in incognito mode, navigate to the incognito route with the message
-    // The incognito page will handle the conversation in memory only
+    // Note: Attachments in incognito mode are not supported for initial message
+    // as we can't pass large base64 data via query params
     await router.push({ path: '/incognito', query: { initialMessage: message } });
   } else {
-    // Create a new conversation with the initial message
-    const conversationId = await createNewConversationWithMessage(message);
+    // Create a new conversation with the initial message and attachments
+    const conversationId = await createNewConversationWithMessage(message, attachments);
 
     // Navigate immediately to the new conversation
     // The [id].vue route will detect this is a new conversation and trigger the AI response

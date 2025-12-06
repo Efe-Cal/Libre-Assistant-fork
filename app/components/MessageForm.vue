@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, nextTick } from "vue";
+import { ref, computed, watch, nextTick, toRaw } from "vue";
 import { Icon } from "@iconify/vue";
 import {
   DropdownMenuRoot,
@@ -10,6 +10,7 @@ import {
 import { useWindowSize } from "@vueuse/core";
 import Logo from "./Logo.vue";
 import BottomSheetModelSelector from "./BottomSheetModelSelector.vue";
+import { useAttachments } from "~/composables/useAttachments";
 
 // Define component properties and emitted events
 const props = defineProps({
@@ -33,6 +34,18 @@ const reasoningEffort = ref("default");
 const inputMessage = ref("");
 const textareaRef = ref(null); // Ref for the textarea element
 const messageFormRoot = ref(null); // Ref for the root element
+const fileInputRef = ref(null); // Ref for the hidden file input
+
+// --- Attachments ---
+const {
+  attachments,
+  error: attachmentError,
+  hasAttachments,
+  addFile,
+  removeAttachment,
+  clearAttachments,
+  clearError: clearAttachmentError
+} = useAttachments();
 
 // Computed property to check if the input is empty (after trimming whitespace)
 const trimmedMessage = computed(() => inputMessage.value.trim());
@@ -58,6 +71,19 @@ const selectedModel = computed(() => {
   }
 
   return findModelById(props.availableModels, props.selectedModelId);
+});
+
+// Computed property to check if the current model supports vision (image attachments)
+const supportsVision = computed(() => {
+  return selectedModel.value?.vision === true;
+});
+
+// Computed property for accepted file types based on model capabilities
+// PDFs work with any model (via file-parser plugin), images require vision
+const acceptedFileTypes = computed(() => {
+  return supportsVision.value
+    ? 'image/png,image/jpeg,image/webp,image/gif,.pdf,application/pdf'
+    : '.pdf,application/pdf';
 });
 
 // Computed property to check if the current model supports reasoning
@@ -326,8 +352,11 @@ async function submitMessage() {
   }
 
   // Emit both the processed message (for API request) and original message (for storage)
-  emit("send-message", processedMessage, originalMessage);
+  // Include attachments in the emission
+  emit("send-message", processedMessage, originalMessage, toRaw(attachments.value));
   inputMessage.value = "";
+  // Clear attachments after sending
+  clearAttachments();
   // Force textarea resize after clearing
   await nextTick();
   if (textareaRef.value) {
@@ -410,17 +439,87 @@ function setReasoningEffort(value) {
   }
 }
 
+// --- Attachment Handlers ---
+
+/**
+ * Opens the file picker dialog
+ */
+function openFilePicker() {
+  fileInputRef.value?.click();
+}
+
+/**
+ * Handles file selection from the file input
+ * @param {Event} event - The change event from file input
+ */
+async function handleFileSelect(event) {
+  const files = Array.from(event.target.files || []);
+  for (const file of files) {
+    await addFile(file, supportsVision.value);
+  }
+  // Reset input to allow selecting the same file again
+  event.target.value = '';
+}
+
 // Expose the setMessage function to be called from the parent component
 defineExpose({ setMessage, toggleReasoning, setReasoningEffort, $el: messageFormRoot });
 </script>
 
 <template>
   <div ref="messageFormRoot" class="input-section">
+    <!-- Hidden file input -->
+    <input
+      ref="fileInputRef"
+      type="file"
+      :accept="acceptedFileTypes"
+      multiple
+      class="hidden-file-input"
+      @change="handleFileSelect"
+    />
+
     <div class="input-area-wrapper">
+      <!-- Attachment error message -->
+      <div v-if="attachmentError" class="attachment-error">
+        <Icon icon="material-symbols:error-outline" width="16" height="16" />
+        <span>{{ attachmentError }}</span>
+        <button class="dismiss-error" @click="clearAttachmentError" aria-label="Dismiss error">
+          <Icon icon="material-symbols:close" width="14" height="14" />
+        </button>
+      </div>
+
+      <!-- Attachment previews -->
+      <div v-if="hasAttachments" class="attachment-preview-row">
+        <div
+          v-for="attachment in attachments"
+          :key="attachment.id"
+          class="attachment-preview"
+          :class="attachment.type"
+        >
+          <img v-if="attachment.type === 'image'" :src="attachment.dataUrl" :alt="attachment.filename" />
+          <Icon v-else icon="material-symbols:picture-as-pdf" width="24" height="24" class="pdf-icon" />
+          <span class="attachment-name">{{ attachment.filename }}</span>
+          <button class="remove-attachment" @click="removeAttachment(attachment.id)" aria-label="Remove attachment">
+            <Icon icon="material-symbols:close" width="14" height="14" />
+          </button>
+        </div>
+      </div>
+
       <textarea ref="textareaRef" v-model="inputMessage" :disabled="isLoading" @keydown.enter="handleEnterKey"
         placeholder="Type your message..." class="chat-textarea" rows="1"></textarea>
 
       <div class="input-actions">
+        <!-- Attachment button (plus icon) - PDFs work with any model, images require vision -->
+        <button
+          type="button"
+          class="feature-button attachment-btn"
+          @click="openFilePicker"
+          :disabled="isLoading"
+          :aria-label="supportsVision ? 'Attach image or PDF' : 'Attach PDF'"
+          :title="supportsVision ? 'Attach image or PDF' : 'Attach PDF (images require vision model)'"
+        >
+          <Icon icon="material-symbols:add" width="22" height="22" />
+        </button>
+
         <!-- Reasoning toggle for models that should show a reasoning toggle -->
         <button v-if="selectedModel && showReasoningToggle && supportsReasoning"
           type="button" class="feature-button search-toggle-btn"
@@ -457,7 +556,7 @@ defineExpose({ setMessage, toggleReasoning, setReasoningEffort, $el: messageForm
             <span class="model-name-truncate">{{ props.selectedModelName }}</span>
           </button>
 
-          <button type="submit" class="action-btn send-btn" :disabled="!trimmedMessage && !isLoading"
+          <button type="submit" class="action-btn send-btn" :disabled="(!trimmedMessage && !hasAttachments) && !isLoading"
             @click="handleActionClick" :aria-label="isLoading ? 'Stop generation' : 'Send message'">
             <Icon v-if="!isLoading" icon="material-symbols:arrow-upward-rounded" width="22" height="22" />
             <Icon v-else icon="material-symbols:stop-rounded" width="22" height="22" />
@@ -699,5 +798,133 @@ defineExpose({ setMessage, toggleReasoning, setReasoningEffort, $el: messageForm
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* --- ATTACHMENTS --- */
+.hidden-file-input {
+  display: none;
+}
+
+.attachment-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background-color: var(--error-bg, rgba(239, 68, 68, 0.1));
+  border: 1px solid var(--error-border, rgba(239, 68, 68, 0.3));
+  border-radius: 8px;
+  color: var(--error-text, #ef4444);
+  font-size: 0.875rem;
+}
+
+.attachment-error span {
+  flex: 1;
+}
+
+.dismiss-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.7;
+  transition: opacity 0.15s ease;
+}
+
+.dismiss-error:hover {
+  opacity: 1;
+}
+
+.attachment-preview-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.attachment-preview {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background-color: var(--bg-secondary, var(--bg-input));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-width: 200px;
+}
+
+.attachment-preview.image {
+  padding: 4px;
+}
+
+.attachment-preview.image img {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
+.attachment-preview.pdf {
+  padding-right: 28px;
+}
+
+.attachment-preview .pdf-icon {
+  color: var(--error-text, #ef4444);
+  flex-shrink: 0;
+}
+
+.attachment-name {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100px;
+}
+
+.attachment-preview.image .attachment-name {
+  display: none;
+}
+
+.remove-attachment {
+  position: absolute;
+  padding: 0;
+  top: -6px;
+  right: -6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background-color: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all 0.15s ease;
+}
+
+.remove-attachment:hover {
+  background-color: var(--error-bg, rgba(239, 68, 68, 0.1));
+  border-color: var(--error-border, rgba(239, 68, 68, 0.3));
+  color: var(--error-text, #ef4444);
+}
+
+.attachment-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+}
+
+.attachment-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

@@ -36,6 +36,7 @@ export const availableModels = [
         name: "Gemini 3 Pro Preview",
         description: "Early access to Google's next-gen, most capable multimodal model.",
         reasoning: true,
+        vision: true,
         extra_functions: [],
         extra_parameters: {}
       },
@@ -44,6 +45,7 @@ export const availableModels = [
         name: "Gemini 2.5 Flash",
         description: "Low-latency, highly efficient model optimized for speed.",
         reasoning: true,
+        vision: true,
         extra_functions: [],
         extra_parameters: {
           reasoning_effort: [["low", "medium", "high"], "medium"],
@@ -55,6 +57,7 @@ export const availableModels = [
         name: "Gemini 2.5 Flash Lite Preview",
         description: "Lightweight variant of Gemini 2.5 Flash optimized for speed.",
         reasoning: true,
+        vision: true,
         extra_functions: [],
         extra_parameters: {
           reasoning_effort: [["low", "medium", "high"], "medium"],
@@ -71,6 +74,7 @@ export const availableModels = [
         name: "GPT-5.1",
         description: "The frontier flagship model delivering frontier general intelligence.",
         reasoning: true,
+        vision: true,
         extra_functions: [],
         extra_parameters: {
           reasoning_effort: [["low", "medium", "high"], "medium"],
@@ -106,6 +110,7 @@ export const availableModels = [
         id: "deepseek/deepseek-v3.2",
         name: "DeepSeek V3.2",
         description: "Advanced general-purpose model designed with efficiency in mind.",
+        tool_use: false,
         reasoning: [true, false],
         extra_functions: [],
         extra_parameters: {}
@@ -114,6 +119,7 @@ export const availableModels = [
         id: "deepseek/deepseek-v3.2-speciale",
         name: "DeepSeek V3.2 Speciale",
         description: "High-compute SOTA variant designed for complex math & stem tasks.",
+        tool_use: false,
         reasoning: true,
         extra_functions: [],
         extra_parameters: {}

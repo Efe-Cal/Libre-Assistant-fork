@@ -38,6 +38,7 @@ function findModelById(models, id) {
  * @param {string[]} toolNames - Array of available tool names
  * @param {boolean} isSearchEnabled - Whether the browser search tool is enabled
  * @param {boolean} isIncognito - Whether incognito mode is enabled
+ * @param {Array} attachments - Array of file attachments [{ type: 'image'|'pdf', filename, dataUrl, mimeType }]
  * @yields {Object} A chunk object with content and/or reasoning
  * @property {string|null} content - The main content of the response chunk
  * @property {string|null} reasoning - Any reasoning information included in the response chunk
@@ -51,7 +52,8 @@ export async function* handleIncomingMessage(
   settings = {},
   toolNames = [],
   isSearchEnabled = false,
-  isIncognito = false
+  isIncognito = false,
+  attachments = []
 ) {
   try {
     // Validate required parameters
@@ -78,8 +80,12 @@ export async function* handleIncomingMessage(
     }
 
     // Determine which tools are actually being used
+    // First, check if the selected model supports tool use (defaults to true if not specified)
+    const selectedModelInfo = findModelById(availableModels, selectedModel);
+    const modelHasToolUse = selectedModelInfo?.tool_use !== false; // Default to true unless explicitly false
+
     const enabledToolNames = [];
-    if (settings.global_memory_enabled && !isIncognito) {
+    if (modelHasToolUse && settings.global_memory_enabled && !isIncognito) {
       enabledToolNames.push(
         'listMemory',
         'addMemory',
@@ -94,14 +100,61 @@ export async function* handleIncomingMessage(
       enabledToolNames,
       isIncognito ? {} : settings,
       memoryFacts,
-      isIncognito // Pass incognito mode state
+      isIncognito, // Pass incognito mode state
+      modelHasToolUse // Pass tool use capability
     );
 
+    // Build user message content based on attachments
+    let userMessageContent;
+    let hasPDFAttachments = false;
+
+    if (attachments && attachments.length > 0) {
+      // Multimodal message format with content parts
+      const contentParts = [
+        { type: 'text', text: queryWithDateTime }
+      ];
+
+      for (const attachment of attachments) {
+        if (attachment.type === 'image') {
+          // Image format for vision models
+          contentParts.push({
+            type: 'image_url',
+            image_url: {
+              url: attachment.dataUrl
+            }
+          });
+        } else if (attachment.type === 'pdf') {
+          // PDF format - uses file-parser plugin with mistral-ocr
+          hasPDFAttachments = true;
+          contentParts.push({
+            type: 'file',
+            file: {
+              filename: attachment.filename,
+              file_data: attachment.dataUrl
+            }
+          });
+        }
+      }
+
+      userMessageContent = contentParts;
+    } else {
+      // Simple text message
+      userMessageContent = queryWithDateTime;
+    }
+
     // Build base messages for this user turn
+    // History messages may have complex content (arrays) or annotations
     const baseMessages = [
       { role: "system", content: systemPrompt },
-      ...plainMessages.map(m => ({ role: m.role, content: m.content })),
-      { role: "user", content: queryWithDateTime },
+      ...plainMessages.map(m => {
+        const msg = { role: m.role, content: m.content };
+        // Include annotations for PDF reuse (cost optimization)
+        if (m.annotations) {
+          msg.annotations = m.annotations;
+        }
+        return msg;
+      }),
+      { role: "user", content: userMessageContent },
     ];
 
     // Used only inside this turn for tool rounds
@@ -113,8 +166,8 @@ export async function* handleIncomingMessage(
       : [];
 
     // Agent loop config
-    const selectedModelInfo = findModelById(availableModels, selectedModel);
-    const modelSupportsTools = enabledToolSchemas.length > 0 && selectedModelInfo?.supports_tools !== false; // assume true unless explicitly false
+    // Model supports tools only if it has tool_use enabled AND there are tools available
+    const modelSupportsTools = modelHasToolUse && enabledToolSchemas.length > 0;
     const maxToolIterations = settings.tool_max_iterations ?? 4;
     let iteration = 0;
 
@@ -126,14 +179,22 @@ export async function* handleIncomingMessage(
       ];
 
       // Build request body for this call
+      // Build plugins array for web search only
+      const plugins = [];
+
+      // Add web search plugin if enabled
+      if (isSearchEnabled) {
+        plugins.push({
+          "id": "web",
+          "search_prompt": "Here are some web search results that might be relevant: "
+        });
+      }
+
       const requestBody = {
         model: selectedModel,
         messages: messagesForThisCall,
         stream: true,
-        plugins: isSearchEnabled ? [{
-          "id": "web",
-          "search_prompt": "Here are some web search results that might be relevant: "
-        }] : [],
+        ...(plugins.length > 0 && { plugins }),
         ...(modelSupportsTools && {
           tools: enabledToolSchemas,
           tool_choice: "auto",
@@ -168,8 +229,12 @@ export async function* handleIncomingMessage(
         }
         // Handle models with reasoning: true - these have reasoning capabilities but no toggle
         else if (selectedModelInfo.reasoning === true) {
+          // Special case for deepseek-v3.2-speciale: always send reasoning.enabled=true
+          if (selectedModel === 'deepseek/deepseek-v3.2-speciale') {
+            requestBody.reasoning = { enabled: true };
+          }
           // Add reasoning_effort if specified in model parameters
-          if (modelParameters?.reasoning?.effort) {
+          else if (modelParameters?.reasoning?.effort) {
             requestBody.reasoning = { effort: modelParameters.reasoning.effort };
           }
         }
@@ -325,6 +390,20 @@ export async function* handleIncomingMessage(
                   reasoning: null,
                   tool_calls: [],
                   usage: parsed.usage,
+                };
+              }
+
+              // Capture annotations from the response (for PDF reuse)
+              // Annotations may come in different places depending on the response format
+              const annotations = choice.message?.annotations ||
+                choice.delta?.annotations ||
+                parsed.annotations;
+              if (annotations) {
+                yield {
+                  content: null,
+                  reasoning: null,
+                  tool_calls: [],
+                  annotations: annotations,
                 };
               }
             }

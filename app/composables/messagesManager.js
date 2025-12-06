@@ -69,14 +69,22 @@ export function useMessagesManager(chatPanel) {
   /**
    * Adds a user message to the messages array
    * @param {string} content - The user's message content
+   * @param {Array} attachments - Optional array of file attachments
    */
-  function addUserMessage(content) {
-    if (!content.trim()) return;
+  function addUserMessage(content, attachments = []) {
+    if (!content.trim() && attachments.length === 0) return;
 
     const userMessage = {
       id: generateId(),
       role: "user",
       content: content,
+      attachments: attachments.map(a => ({
+        id: a.id,
+        type: a.type,
+        filename: a.filename,
+        dataUrl: a.dataUrl,
+        mimeType: a.mimeType
+      })),
       timestamp: new Date(),
       complete: true,
     };
@@ -109,7 +117,8 @@ export function useMessagesManager(chatPanel) {
       reasoningEndTime: null,
       reasoningDuration: null,
       error: false,
-      errorDetails: null
+      errorDetails: null,
+      annotations: null  // For PDF parsing reuse
     };
 
     messages.value.push(assistantMsg);
@@ -133,9 +142,10 @@ export function useMessagesManager(chatPanel) {
    * Sends a message to the AI and handles the response
    * @param {string} message - The user's message
    * @param {string} originalMessage - The original user message (before any reasoning prepends)
+   * @param {Array} attachments - Optional array of file attachments
    */
-  async function sendMessage(message, originalMessage = null) {
-    if (!message.trim() || isLoading.value) return;
+  async function sendMessage(message, originalMessage = null, attachments = []) {
+    if ((!message.trim() && attachments.length === 0) || isLoading.value) return;
 
     controller.value = new AbortController();
     isLoading.value = true;
@@ -143,7 +153,7 @@ export function useMessagesManager(chatPanel) {
 
     // Add user message using the original message (without /no_think prepended)
     const messageToStore = originalMessage !== null ? originalMessage : message;
-    addUserMessage(messageToStore);
+    addUserMessage(messageToStore, attachments);
 
     // Create assistant message
     const assistantMsg = createAssistantMessage();
@@ -207,7 +217,8 @@ export function useMessagesManager(chatPanel) {
         message,
         messages.value.filter(msg => msg.complete && msg.content !== messageToStore).map(msg => ({
           role: msg.role,
-          content: msg.content
+          content: msg.content,
+          annotations: msg.annotations  // Pass annotations for PDF reuse
         })),
         controller.value,
         settingsManager.settings.selected_model_id,
@@ -215,7 +226,8 @@ export function useMessagesManager(chatPanel) {
         settingsManager.settings,
         selectedModelDetails.extra_functions || [],
         settingsManager.settings.parameter_config?.grounding ?? DEFAULT_PARAMETERS.grounding,
-        isIncognito.value
+        isIncognito.value,
+        attachments  // Pass attachments to API
       );
 
       // Track if we've received the first token
@@ -332,6 +344,12 @@ export function useMessagesManager(chatPanel) {
           if (chunk.usage.prompt_tokens !== undefined) {
             assistantMsg.promptTokens = chunk.usage.prompt_tokens;
           }
+        }
+
+        // Process annotations from OpenRouter (for PDF reuse)
+        if (chunk.annotations) {
+          console.log('[PDF Annotations] Received annotations:', chunk.annotations);
+          assistantMsg.annotations = chunk.annotations;
         }
 
         // Update the messages array with a new object to trigger reactivity
