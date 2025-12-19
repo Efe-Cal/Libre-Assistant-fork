@@ -7,6 +7,7 @@ export default defineNuxtConfig({
   // Add individual Nuxt SEO modules
   modules: [
     '@nuxtjs/sitemap',
+    '@vueuse/nuxt'
   ],
 
   // Performance optimizations

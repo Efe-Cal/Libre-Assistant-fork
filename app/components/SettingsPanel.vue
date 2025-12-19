@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref, watch } from "vue";
+import { onMounted, ref, watch, computed } from "vue";
 import { useSettings } from "@/composables/useSettings";
 import { useDark, useToggle } from "@vueuse/core";
 import { SwitchRoot, SwitchThumb } from "reka-ui";
@@ -18,6 +18,7 @@ const toggleDark = useToggle(isDark);
 const globalMemoryEnabled = ref(false);
 const gptOssLimitTables = ref(false);
 const memoryFacts = ref([]);
+const isMac = ref(false);
 
 // User profile fields
 const userName = ref("");
@@ -42,6 +43,11 @@ const navItems = [
     icon: "material-symbols:memory"
   },
   {
+    key: "keybinds",
+    label: "Keybinds",
+    icon: "material-symbols:keyboard"
+  },
+  {
     key: "about",
     label: "About",
     icon: "material-symbols:info"
@@ -60,6 +66,11 @@ onMounted(async () => {
 
   // Load memory facts
   await loadMemoryFacts();
+
+  // Detect platform
+  if (typeof window !== "undefined") {
+    isMac.value = /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+  }
 });
 
 watch(
@@ -282,6 +293,80 @@ async function handleClearAllMemory() {
 
               <div v-else class="memory-disabled-message">
                 <p>Global memory is currently disabled. Enable it to start remembering facts about you.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Keybinds Tab -->
+          <div v-show="currTab === 'keybinds'" class="settings-section">
+            <div class="settings-content">
+              <div class="content-header">
+                <h2>Keyboard Shortcuts</h2>
+                <p>Master Libre Assistant with these shortcuts</p>
+              </div>
+
+              <div class="keybind-group">
+                <h3>Text Input</h3>
+                <div class="keybind-list">
+                  <div class="keybind-row">
+                    <span class="keybind-desc">Focus text input</span>
+                    <div class="keybind-keys">
+                      <kbd>/</kbd>
+                    </div>
+                  </div>
+                  <div class="keybind-row">
+                    <span class="keybind-desc">New line</span>
+                    <div class="keybind-keys">
+                      <kbd>{{ isMac ? '⇧' : 'Shift' }}</kbd>
+                      <span class="key-plus">+</span>
+                      <kbd>Enter</kbd>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="keybind-group">
+                <h3>General</h3>
+                <div class="keybind-list">
+                  <div class="keybind-row">
+                    <span class="keybind-desc">Toggle main sidebar</span>
+                    <div class="keybind-keys">
+                      <kbd>{{ isMac ? '⌘' : 'Ctrl' }}</kbd>
+                      <span class="key-plus">+</span>
+                      <kbd>B</kbd>
+                    </div>
+                  </div>
+                  <div class="keybind-row">
+                    <span class="keybind-desc">Toggle secondary sidebar</span>
+                    <div class="keybind-keys">
+                      <kbd>{{ isMac ? '⌘' : 'Ctrl' }}</kbd>
+                      <span class="key-plus">+</span>
+                      <kbd>{{ isMac ? '⌥' : 'Alt' }}</kbd>
+                      <span class="key-plus">+</span>
+                      <kbd>B</kbd>
+                    </div>
+                  </div>
+                  <div class="keybind-row">
+                    <span class="keybind-desc">New chat</span>
+                    <div class="keybind-keys">
+                      <kbd>{{ isMac ? '⌘' : 'Ctrl' }}</kbd>
+                      <span class="key-plus">+</span>
+                      <kbd>{{ isMac ? '⌥' : 'Alt' }}</kbd>
+                      <span class="key-plus">+</span>
+                      <kbd>N</kbd>
+                    </div>
+                  </div>
+                  <div class="keybind-row">
+                    <span class="keybind-desc">Toggle incognito mode</span>
+                    <div class="keybind-keys">
+                      <kbd>{{ isMac ? '⌘' : 'Ctrl' }}</kbd>
+                      <span class="key-plus">+</span>
+                      <kbd>{{ isMac ? '⌥' : 'Alt' }}</kbd>
+                      <span class="key-plus">+</span>
+                      <kbd>I</kbd>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -744,6 +829,83 @@ async function handleClearAllMemory() {
 
 .save-btn:hover {
   background: var(--primary-600);
+}
+
+/* Keybinds Styling */
+.keybind-group {
+  margin-bottom: 2rem;
+}
+
+.keybind-group h3 {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 1rem;
+  opacity: 0.8;
+}
+
+.keybind-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.keybind-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.25rem;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  transition: all 0.2s ease;
+}
+
+.keybind-row:hover {
+  border-color: var(--primary-a4);
+  background: var(--bg-primary);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+}
+
+.keybind-desc {
+  font-size: 0.9375rem;
+  color: var(--text-primary);
+  font-weight: 450;
+}
+
+.keybind-keys {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 2px 0 var(--border), 0 2px 4px rgba(0, 0, 0, 0.05);
+  transition: all 0.1s ease;
+}
+
+.key-plus {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  margin: 0 2px;
 }
 
 /* Responsive */

@@ -20,7 +20,6 @@
     "@phosphor-icons/vue": "^2.2.1",
     "@vercel/analytics": "^1.5.0",
     "@vercel/speed-insights": "^1.2.0",
-    "@vueuse/core": "^14.0.0",
     "animejs": "^4.2.2",
     "highlight.js": "^11.11.1",
     "katex": "^0.16.25",
@@ -36,5 +35,9 @@
     "reka-ui": "^2.6.0",
     "vue": "^3.5.24",
     "vue-router": "^4.6.3"
+  },
+  "devDependencies": {
+    "@vueuse/core": "^14.1.0",
+    "@vueuse/nuxt": "^14.1.0"
   }
 }

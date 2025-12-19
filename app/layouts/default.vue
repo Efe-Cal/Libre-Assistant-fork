@@ -52,7 +52,7 @@ import 'highlight.js/styles/github.css';
 import 'highlight.js/styles/github-dark.css';
 import { inject } from "@vercel/analytics"
 import { injectSpeedInsights } from '@vercel/speed-insights';
-import { useDark } from "@vueuse/core";
+import { useDark, useMagicKeys, whenever } from "@vueuse/core";
 import { useHead } from '@unhead/vue';
 import { DialogRoot, DialogContent, DialogPortal, DialogOverlay } from 'reka-ui';
 import { useRoute, useRouter } from 'vue-router';
@@ -81,6 +81,12 @@ const { getIsScrolledTop } = useGlobalScrollStatus();
 
 // Use global incognito state
 const { isIncognito, toggleIncognito: globalToggleIncognito } = useGlobalIncognito();
+
+// Initialize shortcut keys
+const keys = useMagicKeys()
+
+const isMac = process.client ? navigator.userAgent.includes('Mac') : false;
+const mod = isMac ? keys.meta : keys.ctrl;
 
 const route = useRoute(); // Get current route
 const router = useRouter();
@@ -163,7 +169,7 @@ function handleDeleteConversation(id) {
 
 function handleNewConversation() {
   // This will be handled by navigating to the /new route
-  router.push('/new');
+  router.push('/');
   console.log("New conversation requested");
 }
 
@@ -224,6 +230,20 @@ function sendMessage(message, originalMessage = null) {
   // This will be implemented based on actual needs
   console.log("Sending message:", message);
 }
+
+//-- Keyboard shortcuts
+
+// Toggle main sidebar
+whenever( () => mod.value && keys.b.value && !keys.alt.value, () => { toggleSidebar(); });
+
+// Toggle secondary sidebar
+whenever( () => mod.value && keys.alt.value && keys.b.value, () => { parameterConfigPanelOpen.value = !parameterConfigPanelOpen.value; });
+
+// Create new chat
+whenever( () => mod.value && keys.alt.value && keys.n.value, () => { handleNewConversation(); });
+
+// Toggle incognito mode
+whenever( () => mod.value && keys.alt.value && keys.i.value, () => { toggleIncognito(); });
 </script>
 
 <style scoped>

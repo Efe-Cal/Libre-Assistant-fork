@@ -27,6 +27,8 @@ const emit = defineEmits([
   "empty",
 ]);
 
+const keys = useMagicKeys();
+
 // Local state for reasoning effort
 const reasoningEffort = ref("default");
 
@@ -37,6 +39,7 @@ const messageFormRoot = ref(null); // Ref for the root element
 const fileInputRef = ref(null); // Ref for the hidden file input
 const isDragging = ref(false); // Track drag state for visual feedback
 const isProcessingFiles = ref(false); // Track file processing state for loading indicator
+const isFocused = ref(false); // Track focus state for the textarea
 
 // --- Attachments ---
 const {
@@ -586,6 +589,15 @@ async function handleDrop(event) {
   }
 }
 
+// If text form isn't focused and / is pressed, focus text form
+// We don't use whenever here to prevent the default action
+onKeyStroke("/", (e) => {
+  if (!isFocused.value) {
+    e.preventDefault();
+    textareaRef.value.focus();
+  }
+})
+
 // Expose the setMessage function to be called from the parent component
 defineExpose({ setMessage, toggleReasoning, setReasoningEffort, $el: messageFormRoot });
 </script>
@@ -647,6 +659,8 @@ defineExpose({ setMessage, toggleReasoning, setReasoningEffort, $el: messageForm
         :disabled="isLoading" 
         @keydown.enter="handleEnterKey"
         @paste="handlePaste"
+        @focus="isFocused = true"
+        @blur="isFocused = false"
         placeholder="Type your message..." 
         class="chat-textarea" 
         rows="1"

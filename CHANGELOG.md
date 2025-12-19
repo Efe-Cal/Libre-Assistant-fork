@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2025-12-19
+
+### Added
+- Implemented search tool/endpoint using search.hackclub.com
+- Added interleaved thinking (think -> tool -> think so on and so forth, allowing for more in-depth research)
+- Implemented chat widgets to show reasoning/tools in chat reliably
+- Added keyboard shortcuts
+
+### Fixed
+- Added models (Gemin 3 Flash Preview, Qwen3-Next Instruct, Qwen3-VL-235b Instruct)
+
 ## [0.3.1] - 2025-12-06
 
 ### Fixed
