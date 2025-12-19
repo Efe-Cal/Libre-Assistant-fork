@@ -16,7 +16,7 @@ export default defineNuxtConfig({
 
   // Site configuration for SEO modules
   site: {
-    url: 'https://your-domain.com', // Replace with your actual domain
+    url: 'https://libreassistant.vercel.app', // Replace with your actual domain
     name: 'Libre Assistant',
     description: 'An open-source AI assistant interface',
     defaultLocale: 'en', // default locale of your site
@@ -40,13 +40,13 @@ export default defineNuxtConfig({
         { name: 'application-name', content: 'Libre Assistant' },
         { name: 'apple-mobile-web-app-title', content: 'Libre Assistant' },
         { name: 'twitter:card', content: 'summary' },
-        { name: 'twitter:url', content: 'https://your-domain.com' },
+        { name: 'twitter:url', content: 'https://libreassistant.vercel.app' },
         { name: 'twitter:title', content: 'Libre Assistant' },
         { name: 'twitter:description', content: 'An open-source AI assistant interface' },
 
         // Open Graph tags for social sharing
         { property: 'og:type', content: 'website' },
-        { property: 'og:url', content: 'https://your-domain.com' },
+        { property: 'og:url', content: 'https://libreassistant.vercel.app' },
         { property: 'og:title', content: 'Libre Assistant' },
         { property: 'og:description', content: 'An open-source AI assistant interface' },
         { property: 'og:site_name', content: 'Libre Assistant' },
@@ -75,6 +75,7 @@ export default defineNuxtConfig({
   runtimeConfig: {
     // Private config that only the server can access
     hackclubApiKey: '',
+    hackclubSearchApiKey: '',
     // Public config that is exposed to the client
     public: {
       // Add any public config here

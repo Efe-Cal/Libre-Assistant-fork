@@ -301,10 +301,10 @@ const parameters = [
 const middlewareParameters = [
   {
     name: 'grounding',
-    label: 'Grounding with Web Search',
+    label: 'Web search',
     type: 'boolean',
     value: grounding,
-    description: 'Enable grounding with web search results to provide factually accurate responses.',
+    description: 'Enable web search capabilities using Brave Search to provide factually accurate responses.',
     inputHandler: (value) => grounding.value = value
   }
 ];

@@ -34,6 +34,8 @@ export async function createConversation(plainMessages, lastUpdated) {
       tokenCount: msg.tokenCount,
       // Annotations for reuse
       annotations: msg.annotations ? JSON.parse(JSON.stringify(msg.annotations)) : null,
+      // Timeline parts for interleaved rendering
+      parts: msg.parts ? JSON.parse(JSON.stringify(msg.parts)) : null,
     }),
     // Add any other properties your message objects might have
   }));
@@ -167,7 +169,10 @@ export async function storeMessages(
       // Token counting
       tokenCount: msg.tokenCount,
       // Annotations for reuse
+      // Annotations for reuse
       annotations: msg.annotations ? JSON.parse(JSON.stringify(msg.annotations)) : null,
+      // Timeline parts for interleaved rendering
+      parts: msg.parts ? JSON.parse(JSON.stringify(msg.parts)) : null,
     }),
     // Add any other properties your message objects might have
   }));

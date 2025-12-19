@@ -56,7 +56,7 @@ const MEMORY_AWARENESS = `### Memory Awareness
   - addMemory(fact, isGlobal): Add a new fact (isGlobal defaults to false for local memories)
   - modifyMemory(oldFact, newFact, isGlobal): Update an existing fact
   - deleteMemory(fact): Remove a specific fact from memory
-*   Use these tools when the user explicitly asks you to remember something or when you identify important information that should be retained.`;
+*   Use these tools whenever the user explicitly asks you to remember something or if they reveal information that you believe should be retained for future conversations.`;
 
 const MEMORY_AWARENESS_NO_TOOLS = `### Memory Awareness
 *   You have a global memory system that remembers important facts about the user across conversations.
@@ -66,6 +66,7 @@ const MEMORY_AWARENESS_NO_TOOLS = `### Memory Awareness
 *   Only memories relevant to the current conversation are automatically included to optimize context usage.
 *   **Note**: You cannot modify memories yourself. If the user asks you to remember something, politely inform them that you can see their memories but cannot modify them directly.`;
 
+// Only for GPT-OSS models
 const TABLE_LIMITATION_GUIDELINES = `### Table Usage Guidelines
 *   Limit your use of tables as much as possible.
 *   Consider using lists, bullet points, or plain text as alternatives to tables when possible.`;

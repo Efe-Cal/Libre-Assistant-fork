@@ -4,6 +4,7 @@ import { Icon } from "@iconify/vue";
 import { chatPanelMd as md } from '../utils/markdown';
 import { copyCode, downloadCode } from '../utils/codeBlockUtils';
 import StreamingMessage from './StreamingMessage.vue';
+import ChatWidget from './ChatWidget.vue';
 import LoadingSpinner from './LoadingSpinner.vue';
 import { getFormattedStatsFromExecutedTools } from '../composables/searchViewStats';
 
@@ -396,15 +397,7 @@ function renderMessageContent(content, executedTools) {
 
 
 
-const renderReasoningContent = (content) => {
-  // First render Markdown
-  let html = md.render(content || '');
 
-  // For reasoning content, we need to handle processing in a controlled way
-  // This will be handled by the watch function that monitors message updates
-
-  return html;
-};
 
 // Function to handle when streaming message starts
 function onStreamingMessageStart(messageId) {
@@ -459,6 +452,106 @@ function copyMessage(content, event) {
   });
 }
 
+// Function to determine CSS classes for parts based on their position and adjacent parts
+function getPartClass(partType, index, parts) {
+  // Only apply special styling to reasoning and tool_group parts
+  if (partType !== 'reasoning' && partType !== 'tool_group') {
+    return '';
+  }
+
+  const partClasses = [];
+  const previousPart = index > 0 ? parts[index - 1] : null;
+  const nextPart = index < parts.length - 1 ? parts[index + 1] : null;
+
+  // Add class if this is the first part or if the previous part is not reasoning/tool_group
+  if (index === 0 || (previousPart && previousPart.type !== 'reasoning' && previousPart.type !== 'tool_group')) {
+    partClasses.push('has-previous-content');
+  }
+
+  // Add class if this is the last part or if the next part is not reasoning/tool_group
+  if (index === parts.length - 1 || (nextPart && nextPart.type !== 'reasoning' && nextPart.type !== 'tool_group')) {
+    partClasses.push('has-next-content');
+  }
+
+  return partClasses.join(' ');
+}
+
+// Function to group adjacent reasoning and tool_group parts together
+function getPartGroups(parts) {
+  if (!parts || parts.length === 0) return [];
+
+  const groups = [];
+  let currentGroup = [];
+  let currentGroupType = null; // 'mixed' for reasoning/tool_group, 'content' for content
+
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+
+    // Determine if this part should be grouped with the current group
+    const isActionPart = (part.type === 'reasoning' || part.type === 'tool_group');
+    const isContentPart = (part.type === 'content');
+
+    // If this is an action part (reasoning/tool_group) and we're either starting or continuing an action group
+    if (isActionPart) {
+      if (currentGroupType !== 'mixed') {
+        // Start a new mixed group if we were in a different type
+        if (currentGroup.length > 0) {
+          groups.push({ type: currentGroupType, parts: currentGroup });
+        }
+        currentGroup = [part];
+        currentGroupType = 'mixed';
+      } else {
+        // Add to current mixed group
+        currentGroup.push(part);
+      }
+    }
+    // If this is a content part and we're either starting or continuing a content group
+    else if (isContentPart) {
+      if (currentGroupType !== 'content') {
+        // Start a new content group if we were in a different type
+        if (currentGroup.length > 0) {
+          groups.push({ type: currentGroupType, parts: currentGroup });
+        }
+        currentGroup = [part];
+        currentGroupType = 'content';
+      } else {
+        // Add to current content group
+        currentGroup.push(part);
+      }
+    }
+  }
+
+  // Push the last group
+  if (currentGroup.length > 0) {
+    groups.push({ type: currentGroupType, parts: currentGroup });
+  }
+
+  return groups;
+}
+
+// Function to determine CSS classes for part groups based on their position and adjacent groups
+function getPartGroupClass(group, index, groups) {
+  const groupClasses = [];
+
+  // Only apply special styling to mixed groups (reasoning/tool_group)
+  if (group.type === 'mixed') {
+    const previousGroup = index > 0 ? groups[index - 1] : null;
+    const nextGroup = index < groups.length - 1 ? groups[index + 1] : null;
+
+    // Add class if this is the first group or if the previous group is content
+    if (index === 0 || (previousGroup && previousGroup.type === 'content')) {
+      groupClasses.push('has-previous-content');
+    }
+
+    // Add class if this is the last group or if the next group is content
+    if (index === groups.length - 1 || (nextGroup && nextGroup.type === 'content')) {
+      groupClasses.push('has-next-content');
+    }
+  }
+
+  return groupClasses.join(' ');
+}
+
 defineExpose({ scrollToEnd, isAtBottom, chatWrapper });
 </script>
 
@@ -478,77 +571,117 @@ defineExpose({ scrollToEnd, isAtBottom, chatWrapper });
         <template v-for="message in messages" :key="message.id">
           <div class="message" :class="message.role" :data-message-id="message.id">
             <div class="message-content">
-              <!-- Search and view statistics display -->
-              <div v-if="message.role === 'assistant' && getFormattedStatsForDisplay(message.id)" 
-                   class="search-view-stats">
-                {{ getFormattedStatsForDisplay(message.id) }}
-              </div>
-              
-              <!-- Display notification if message has memory tool calls -->
-              <div v-if="hasMemoryToolCalls(message)" class="memory-adjustment-notification">
-                Adjusted saved memories
-              </div>
+                  <!-- New Parts-Based Rendering -->
+                  <div v-if="message.parts && message.parts.length > 0" class="message-parts-container">
+                    <template v-for="(group, groupIndex) in getPartGroups(message.parts)" :key="`group-${groupIndex}`">
+                      <div
+                        v-if="group.type === 'mixed'"
+                        :class="['part-group-container', getPartGroupClass(group, groupIndex, getPartGroups(message.parts))]"
+                      >
+                        <template v-for="(part, partIndex) in group.parts" :key="`part-${groupIndex}-${partIndex}`">
+                          <!-- Reasoning Part inside group -->
+                          <div v-if="part.type === 'reasoning'" class="part-reasoning inside-group">
+                            <ChatWidget
+                              type="reasoning"
+                              :content="part.content"
+                              status="Reasoning Process"
+                            />
+                          </div>
 
-              <details v-if="message.role === 'assistant' && message.reasoning" class="reasoning-details">
-                <summary class="reasoning-summary">
-                  <span class="reasoning-toggle-icon">
-                    <Icon icon="material-symbols:keyboard-arrow-down-rounded" width="24" height="24" />
-                  </span>
-                  <span class="reasoning-text">
-                    <span v-if="liveReasoningTimers[message.id]">{{
-                      liveReasoningTimers[message.id]
-                      }}</span>
-                    <span v-else-if="message.reasoningDuration > 0">Thought for
-                      {{ formatDuration(message.reasoningDuration) }}</span>
-                    <span v-else-if="
-                      message.reasoningStartTime && message.reasoningEndTime
-                    ">Thought for a moment</span>
-                    <span v-else-if="message.reasoning && message.complete">Thought for a moment</span>
-                    <span v-else>Reasoning</span>
-                  </span>
-                </summary>
-                <div class="reasoning-content-wrapper">
-                  <div class="reasoning-content markdown-content" v-html="renderReasoningContent(message.reasoning)">
-                  </div>
-                </div>
-              </details>
-
-              <div class="bubble">
-                <div v-if="message.role == 'user'" class="user-message-content">
-                  <!-- Display attached files -->
-                  <div v-if="message.attachments?.length" class="message-attachments">
-                    <div 
-                      v-for="attachment in message.attachments" 
-                      :key="attachment.id"
-                      class="attachment-thumbnail"
-                      :class="attachment.type"
-                    >
-                      <img 
-                        v-if="attachment.type === 'image'"
-                        :src="attachment.dataUrl" 
-                        :alt="attachment.filename"
-                        loading="lazy"
-                      />
-                      <div v-else class="pdf-attachment">
-                        <Icon icon="material-symbols:picture-as-pdf" width="24" height="24" />
-                        <span class="pdf-filename">{{ attachment.filename }}</span>
+                          <!-- Tool Group Part inside group -->
+                          <div v-else-if="part.type === 'tool_group'" class="part-tool-group inside-group">
+                            <ChatWidget
+                              type="tool"
+                              :tool-calls="part.tools"
+                            />
+                          </div>
+                        </template>
                       </div>
-                    </div>
+
+                      <!-- Individual content parts -->
+                      <div
+                        v-else-if="group.type === 'content'"
+                        class="part-content"
+                      >
+                         <div v-if="message.complete || groupIndex < getPartGroups(message.parts).length - 1"
+                              class="markdown-content"
+                              v-html="renderMessageContent(group.parts[0].content, [])"></div>
+                         <div v-else>
+                            <StreamingMessage
+                              :content="group.parts[0].content"
+                              :is-complete="message.complete && groupIndex === getPartGroups(message.parts).length - 1"
+                              @complete="onStreamingMessageComplete(message.id)"
+                              @start="onStreamingMessageStart(message.id)"
+                            />
+                         </div>
+                      </div>
+                    </template>
                   </div>
-                  <!-- Message text -->
-                  <div v-if="message.content" class="user-text">{{ message.content }}</div>
-                </div>
-                <div v-else-if="message.complete" class="markdown-content"
-                  v-html="renderMessageContent(message.content, message.executed_tools || [])"></div>
-                <div v-else>
-                  <div v-if="messageLoadingStates[message.id]" class="loading-animation">
-                    <LoadingSpinner />
+
+                  <!-- Legacy Rendering (Fallback) -->
+                  <div v-else>
+                      <!-- Tool Widgets (Legacy) -->
+                      <div v-if="message.role === 'assistant' && message.tool_calls && message.tool_calls.length > 0" class="tool-widgets-container">
+                        <ChatWidget
+                          v-for="(tool, index) in message.tool_calls"
+                          :key="index"
+                          type="tool"
+                          :tool-call="tool"
+                          :result="null"
+                        />
+                      </div>
+                      
+                      <!-- Reasoning Card (Legacy) -->
+                      <div v-if="message.role === 'assistant' && message.reasoning" class="reasoning-card">
+                        <ChatWidget
+                          type="reasoning"
+                          :content="message.reasoning"
+                          :status="liveReasoningTimers[message.id] || (message.reasoningDuration > 0 ? `Thought for ${formatDuration(message.reasoningDuration)}` : message.reasoningStartTime ? 'Thinking...' : 'Reasoning Process')"
+                        />
+                      </div>
+
+                      <!-- Display notification if message has memory tool calls (Legacy style) -->
+                      <div v-if="hasMemoryToolCalls(message)" class="memory-adjustment-notification">
+                        Adjusted saved memories
+                      </div>
+
+                      <div class="bubble">
+                        <div v-if="message.role == 'user'" class="user-message-content">
+                          <!-- Display attached files -->
+                          <div v-if="message.attachments?.length" class="message-attachments">
+                            <div 
+                              v-for="attachment in message.attachments" 
+                              :key="attachment.id"
+                              class="attachment-thumbnail"
+                              :class="attachment.type"
+                            >
+                              <img 
+                                v-if="attachment.type === 'image'"
+                                :src="attachment.dataUrl" 
+                                :alt="attachment.filename"
+                                loading="lazy"
+                              />
+                              <div v-else class="pdf-attachment">
+                                <Icon icon="material-symbols:picture-as-pdf" width="24" height="24" />
+                                <span class="pdf-filename">{{ attachment.filename }}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <!-- Message text -->
+                          <div v-if="message.content" class="user-text">{{ message.content }}</div>
+                        </div>
+                        <div v-else-if="message.complete" class="markdown-content"
+                          v-html="renderMessageContent(message.content, message.executed_tools || [])"></div>
+                        <div v-else>
+                          <div v-if="messageLoadingStates[message.id]" class="loading-animation">
+                            <LoadingSpinner />
+                          </div>
+                          <StreamingMessage :content="message.content" :is-complete="message.complete"
+                            :executed-tools="message.executed_tools || []" @complete="onStreamingMessageComplete(message.id)"
+                            @start="onStreamingMessageStart(message.id)" />
+                        </div>
+                      </div>
                   </div>
-                  <StreamingMessage :content="message.content" :is-complete="message.complete"
-                    :executed-tools="message.executed_tools || []" @complete="onStreamingMessageComplete(message.id)"
-                    @start="onStreamingMessageStart(message.id)" />
-                </div>
-              </div>
               <div class="message-content-footer" :class="{ 'user-footer': message.role === 'user' }">
                 <button class="copy-button" @click="copyMessage(message.content, $event)" :title="'Copy message'"
                   aria-label="Copy message">
@@ -705,71 +838,7 @@ defineExpose({ scrollToEnd, isAtBottom, chatWrapper });
   color: var(--text-primary-dark);
 }
 
-.reasoning-details {
-  background: none;
-  border: none;
-  padding: 0;
-  margin-bottom: 0.75rem;
-  order: -1;
-  width: 100%;
-  max-width: 800px;
-  margin: 0 auto 0.75rem auto;
-  transition: all 0.3s cubic-bezier(.4, 1, .6, 1);
-}
 
-.reasoning-summary {
-  list-style: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  color: var(--text-secondary-light);
-  font-size: 0.9em;
-  font-weight: 500;
-  margin-bottom: 0.5rem;
-  user-select: none;
-}
-
-.dark .reasoning-summary {
-  color: var(--text-secondary-dark);
-}
-
-.reasoning-summary::-webkit-details-marker {
-  display: none;
-}
-
-.reasoning-toggle-icon {
-  transition: transform 0.2s ease-in-out;
-  display: flex;
-  align-items: center;
-  margin-left: -10px;
-  transform: rotate(-90deg);
-}
-
-.reasoning-details[open] .reasoning-toggle-icon {
-  transform: rotate(0deg);
-}
-
-.reasoning-content-wrapper {
-  padding-left: 1.25rem;
-  border-left: 2px solid var(--reasoning-border-light);
-}
-
-.dark .reasoning-content-wrapper {
-  border-left-color: var(--reasoning-border-dark);
-}
-
-.reasoning-content {
-  color: var(--text-secondary-light);
-}
-
-.dark .reasoning-content {
-  color: var(--text-secondary-dark);
-}
-
-.reasoning-details:not([open]) .reasoning-content-wrapper {
-  display: none;
-}
 
 /* Note: .markdown-content base styles are now in code-blocks.css */
 
@@ -973,5 +1042,86 @@ defineExpose({ scrollToEnd, isAtBottom, chatWrapper });
   overflow: hidden;
   text-overflow: ellipsis;
   opacity: 0.9;
+}
+
+/* Tool Widgets Container */
+.tool-widgets-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+  width: 100%;
+  max-width: 800px;
+}
+
+/* Reasoning Card Styles */
+.reasoning-card {
+  margin-bottom: 12px;
+  width: 100%;
+  max-width: 800px;
+}
+
+
+/* Part Group Container Styling - for grouping adjacent reasoning and tool_group parts */
+.part-group-container {
+  border: 2px solid var(--border); /* Thick border for the container */
+  border-radius: 12px; /* Keep border radius for the container */
+  overflow: hidden; /* Contain the individual parts within the container */
+  margin: 12px 0 0; /* Add some spacing between groups */
+  position: relative;
+}
+
+/* Each inside-group needs position:relative for its ::after to position correctly */
+.inside-group {
+  position: relative;
+}
+
+/* Connection line segments between icons */
+.inside-group:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 21px; /* Nudged 1px left for perfect alignment */
+  top: calc(100% - 6px); /* Start 6px before the bottom edge */
+  height: 12px; /* 6px in this element + 6px into the next = centered */
+  width: 0;
+  border-left: 1px solid var(--border);
+  z-index: 1;
+  pointer-events: none;
+  opacity: 1;
+}
+
+/* Remove border-radius from first element's bottom corners when inside a container */
+.part-group-container > :first-child {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+/* Remove border-radius from last element's top corners when inside a container */
+.part-group-container > :last-child {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+/* Remove border-radius from middle elements */
+.part-group-container > :not(:first-child):not(:last-child) {
+  border-radius: 0;
+}
+
+/* Remove border from the last item in the group */
+.part-group-container > :last-child {
+  border-bottom: none;
+}
+
+
+
+.part-content {
+  margin-top: 12px;
+  min-height: 20px;
+}
+
+.message-parts-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
 }
 </style>

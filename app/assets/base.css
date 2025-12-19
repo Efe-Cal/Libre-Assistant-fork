@@ -506,3 +506,262 @@ body {
   color: var(--text-primary);
   flex-shrink: 0;
 }
+
+/* ================================================
+   ChatWidget Styles (unified reasoning + tool widget)
+   ================================================ */
+.chat-widget {
+  position: relative;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background-color: transparent;
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.chat-widget-header {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  cursor: pointer;
+  user-select: none;
+  gap: 10px;
+  transition: background-color 0.2s;
+  font-size: 0.9rem;
+  border-radius: 0;
+  margin: 0;
+}
+
+.chat-widget-header:hover {
+  background-color: var(--btn-hover);
+}
+
+.chat-widget-header.open {
+  background-color: var(--btn-hover);
+}
+
+.chat-widget-icon {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.chat-widget-info {
+  flex: 1;
+  overflow: hidden;
+}
+
+.chat-widget-name {
+  font-weight: 500;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.chat-widget-search-separator {
+  display: inline-block;
+  width: 1px;
+  height: 18px;
+  background-color: var(--text-secondary);
+  opacity: 0.2;
+  margin: 0 10px;
+  flex-shrink: 0;
+}
+
+.chat-widget-search-query {
+  opacity: 0.9;
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-widget-status {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.chat-widget-toggle {
+  color: var(--text-secondary);
+  transition: transform 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.chat-widget-toggle .rotate {
+  transform: rotate(90deg);
+}
+
+.chat-widget-details {
+  padding: 0 14px 14px 14px;
+  background: var(--btn-hover);
+  position: relative;
+  z-index: 1;
+}
+
+/* Reasoning content area */
+.chat-widget .reasoning-content-area {
+  padding-top: 10px;
+}
+
+.chat-widget .reasoning-content-area .reasoning-content {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+/* Search results */
+.chat-widget .search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.chat-widget .search-result-item {
+  border-radius: 6px;
+  transition: background-color 0.2s;
+}
+
+.chat-widget .search-result-link {
+  display: block;
+  text-decoration: none;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.chat-widget .search-result-link:hover {
+  background-color: var(--hover-bg, rgba(0, 0, 0, 0.05));
+}
+
+.dark .chat-widget .search-result-link:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.chat-widget .search-result-title {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--primary);
+  margin-bottom: 2px;
+}
+
+.chat-widget .search-result-domain {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+/* Tool arguments */
+.chat-widget .tool-args {
+  padding-top: 10px;
+}
+
+.chat-widget .tool-args pre {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Memory Details */
+.chat-widget .memory-details {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.memory-item {
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.dark .memory-item {
+  background: var(--elevated-surface);
+}
+
+.memory-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.memory-item-icon {
+  font-size: 1.1rem;
+}
+
+.memory-item.add .memory-item-header {
+  color: var(--success);
+}
+
+.memory-item.modify .memory-item-header {
+  color: var(--primary);
+}
+
+.memory-item.delete .memory-item-header {
+  color: var(--danger);
+}
+
+.memory-item-content p {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.memory-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.diff-label {
+  font-size: 0.65rem;
+  font-weight: 800;
+  opacity: 0.5;
+  margin-bottom: 4px;
+  display: block;
+}
+
+.memory-diff-old p {
+  color: var(--text-secondary);
+  text-decoration: line-through;
+  opacity: 0.6;
+  font-size: 0.9rem;
+}
+
+.memory-diff-icon {
+  display: flex;
+  align-items: center;
+  padding-left: 4px;
+  color: var(--text-muted);
+  opacity: 0.4;
+}
+
+.memory-diff-new p {
+  color: var(--text-primary);
+  font-weight: 500;
+}

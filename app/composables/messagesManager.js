@@ -230,13 +230,55 @@ export function useMessagesManager(chatPanel) {
         attachments  // Pass attachments to API
       );
 
+      // Initialize parts array if not exists
+      if (!assistantMsg.parts) {
+        assistantMsg.parts = [];
+      }
+
+      // Helper to get or create current part based on type
+      // Tool groups should only include tools of the SAME TYPE that occurred CONSECUTIVELY
+      const ensurePart = (type, toolType = null) => {
+        let lastPart = assistantMsg.parts[assistantMsg.parts.length - 1];
+
+        // For tool groups, we need to check both type and toolType to ensure consecutive same-type tools
+        if (type === 'tool_group') {
+          // Create a new tool group if:
+          // 1. No last part exists, OR
+          // 2. Last part is not a tool_group, OR
+          // 3. Last part is a tool_group but has a different toolType
+          if (!lastPart || lastPart.type !== 'tool_group' || lastPart.toolType !== toolType) {
+            lastPart = {
+              type: 'tool_group',
+              toolType: toolType,  // Store the tool type for this group
+              tools: []
+            };
+            assistantMsg.parts.push(lastPart);
+          }
+        } else {
+          // For other types (content, reasoning), create a new part if type differs
+          if (!lastPart || lastPart.type !== type) {
+            lastPart = { type, content: '' };
+            if (type === 'tool_group') {
+              lastPart.tools = [];
+              delete lastPart.content;
+            }
+            assistantMsg.parts.push(lastPart);
+          }
+        }
+
+        return lastPart;
+      };
+
       // Track if we've received the first token
       let firstTokenReceived = false;
 
       for await (const chunk of streamGenerator) {
-        // Process content
-        if (chunk.content !== null && chunk.content !== undefined) {
-          assistantMsg.content += chunk.content;
+        // Process content - only create part if there's actual content to add
+        if (chunk.content !== null && chunk.content !== undefined && chunk.content !== '') {
+          const part = ensurePart('content');
+          part.content += chunk.content;
+
+          assistantMsg.content = (assistantMsg.content || '') + chunk.content;
 
           // Track first token time
           if (!firstTokenReceived) {
@@ -247,7 +289,6 @@ export function useMessagesManager(chatPanel) {
           // Token counting is now handled by the usage object from OpenRouter API
 
           if (
-            chunk.content &&
             assistantMsg.reasoningStartTime !== null &&
             assistantMsg.reasoningEndTime === null
           ) {
@@ -255,19 +296,31 @@ export function useMessagesManager(chatPanel) {
           }
         }
 
-        // Process reasoning
-        if (chunk.reasoning !== null && chunk.reasoning !== undefined) {
-          // Check if the accumulated reasoning is currently only whitespace, and if so, clear it before adding new content
-          if (assistantMsg.reasoning.trim() === '') {
+        // Process reasoning - only create part if there's actual reasoning to add
+        if (chunk.reasoning !== null && chunk.reasoning !== undefined && chunk.reasoning !== '' && chunk.reasoning.trim() !== 'None') {
+          const part = ensurePart('reasoning');
+          // Check if the accumulated reasoning in the current part is currently only whitespace, and if so, clear it before adding new content
+          if (part.content.trim() === '') {
             // If the new chunk is not whitespace, replace the entire reasoning content
             if (chunk.reasoning.trim() !== '') {
-              assistantMsg.reasoning = chunk.reasoning;
+              part.content = chunk.reasoning;
             } else {
               // If both the accumulated reasoning and new chunk are whitespace, append them normally
-              assistantMsg.reasoning += chunk.reasoning;
+              part.content += chunk.reasoning;
             }
           } else {
             // If the accumulated reasoning already has non-whitespace content, append normally
+            part.content += chunk.reasoning;
+          }
+
+          // Update the main reasoning field as well for legacy compatibility
+          if (assistantMsg.reasoning.trim() === '') {
+            if (chunk.reasoning.trim() !== '') {
+              assistantMsg.reasoning = chunk.reasoning;
+            } else {
+              assistantMsg.reasoning += chunk.reasoning;
+            }
+          } else {
             assistantMsg.reasoning += chunk.reasoning;
           }
 
@@ -288,36 +341,18 @@ export function useMessagesManager(chatPanel) {
         // Process tool calls that come in through the streaming
         if (chunk.tool_calls && chunk.tool_calls.length > 0) {
           for (const tool of chunk.tool_calls) {
-            // Accumulate tool call information as it comes in through streaming
-            const existingToolIndex = assistantMsg.tool_calls.findIndex(t => t.index === tool.index);
+            // Use the tool's type to determine if it should go in the same group
+            const toolType = tool.type || 'function';
+            const groupPart = ensurePart('tool_group', toolType);
+
+            // Find existing tool in the current group
+            const existingToolIndex = groupPart.tools.findIndex(t => t.index === tool.index);
+            let existingTool;
+
             if (existingToolIndex >= 0) {
-              // Merge new information with existing tool call
-              const existingTool = assistantMsg.tool_calls[existingToolIndex];
-
-              // Update function name if provided
-              if (tool.function?.name) {
-                existingTool.function.name = tool.function.name;
-              }
-
-              // Accumulate function arguments if provided
-              if (tool.function?.arguments) {
-                if (!existingTool.function.arguments) {
-                  existingTool.function.arguments = tool.function.arguments;
-                } else {
-                  existingTool.function.arguments += tool.function.arguments;
-                }
-              }
-
-              // Update id and type if provided
-              if (tool.id) {
-                existingTool.id = tool.id;
-              }
-              if (tool.type) {
-                existingTool.type = tool.type;
-              }
+              existingTool = groupPart.tools[existingToolIndex];
             } else {
-              // Add new tool call with initial data
-              assistantMsg.tool_calls.push({
+              existingTool = {
                 index: tool.index,
                 id: tool.id || null,
                 type: tool.type || 'function',
@@ -325,7 +360,33 @@ export function useMessagesManager(chatPanel) {
                   name: tool.function?.name || '',
                   arguments: tool.function?.arguments || ''
                 }
-              });
+              };
+              groupPart.tools.push(existingTool);
+
+              // Also add to main tool_calls array for backward compatibility
+              assistantMsg.tool_calls.push(existingTool);
+            }
+
+            // Update existing tool with new information if provided
+            if (tool.function?.name) existingTool.function.name = tool.function.name;
+            if (tool.function?.arguments) existingTool.function.arguments += tool.function.arguments;
+            if (tool.id) existingTool.id = tool.id;
+            if (tool.type) existingTool.type = tool.type;
+          }
+        }
+
+        // Process tool results (custom event from our message.js)
+        if (chunk.tool_result) {
+          const { id, result } = chunk.tool_result;
+          // Find the tool in any part and update it
+          if (assistantMsg.parts) {
+            for (const part of assistantMsg.parts) {
+              if (part.type === 'tool_group') {
+                const tool = part.tools.find(t => t.id === id);
+                if (tool) {
+                  tool.result = result;
+                }
+              }
             }
           }
         }
@@ -356,6 +417,14 @@ export function useMessagesManager(chatPanel) {
         // Create a new object with a copy of the assistantMsg to ensure reactivity
         const updatedMsg = {
           ...assistantMsg,
+          parts: assistantMsg.parts ? [...assistantMsg.parts.map(part => {
+            // For tool groups, copy the tools array
+            if (part.type === 'tool_group') {
+              return { ...part, tools: [...part.tools] };
+            }
+            // For other parts, just copy the part
+            return { ...part };
+          })] : null,
           tool_calls: [...assistantMsg.tool_calls], // Create a new array to ensure reactivity
           tokenCount: assistantMsg.tokenCount,
           totalTokens: assistantMsg.totalTokens,

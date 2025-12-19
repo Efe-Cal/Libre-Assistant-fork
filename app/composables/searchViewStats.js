@@ -7,11 +7,15 @@
 function getFormattedStatsFromExecutedTools(executedTools) {
   let pageCount = 0;
 
-  // Count from old executedTools format (for backward compatibility)
+  // Count from tool_calls (both new parts based and old structure use this)
   if (executedTools && Array.isArray(executedTools)) {
     executedTools.forEach(tool => {
       // Count web page operations (type: "browser.open")
       if (tool.type === 'browser.open') {
+        pageCount++;
+      }
+      // Count new search tool operations
+      if (tool.type === 'function' && tool.function?.name === 'search') {
         pageCount++;
       }
     });
@@ -19,7 +23,7 @@ function getFormattedStatsFromExecutedTools(executedTools) {
 
   // Display only if there are pages read
   if (pageCount > 0) {
-    return `Read ${pageCount} web page${pageCount !== 1 ? 's' : ''}`;
+    return `Performed ${pageCount} search${pageCount !== 1 ? 'es' : ''}`;
   }
 
   return '';

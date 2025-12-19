@@ -6,7 +6,7 @@
 
 import { availableModels } from '~/composables/availableModels';
 import { generateSystemPrompt } from '~/composables/systemPrompt';
-import { listMemory, addMemory, modifyMemory, deleteMemory, findRelevantMemories } from '~/composables/memory';
+import { findRelevantMemories } from '~/composables/memory';
 import { toolManager } from '~/composables/toolsManager';
 
 // Helper function to find a model by ID, including nested models in categories
@@ -94,6 +94,11 @@ export async function* handleIncomingMessage(
       );
     }
 
+    // Enable search tool if enabled in settings/params
+    if (modelHasToolUse && isSearchEnabled) {
+      enabledToolNames.push('search');
+    }
+
     // Generate system prompt based on settings and used tools
     // In incognito mode, use empty settings to avoid customization
     const systemPrompt = await generateSystemPrompt(
@@ -179,16 +184,7 @@ export async function* handleIncomingMessage(
       ];
 
       // Build request body for this call
-      // Build plugins array for web search only
       const plugins = [];
-
-      // Add web search plugin if enabled
-      if (isSearchEnabled) {
-        plugins.push({
-          "id": "web",
-          "search_prompt": "Here are some web search results that might be relevant: "
-        });
-      }
 
       const requestBody = {
         model: selectedModel,
@@ -434,6 +430,16 @@ export async function* handleIncomingMessage(
 
       // Execute tools locally and append tool messages
       const toolResultMessages = await executeToolCallsLocally(completedToolCalls, plainMessages);
+
+      // Yield tool results so the UI can update the widgets
+      for (const toolMsg of toolResultMessages) {
+        yield {
+          tool_result: {
+            id: toolMsg.tool_call_id,
+            result: toolMsg.content
+          }
+        };
+      }
 
       // Keep these for next iteration
       intermediateMessages.push(

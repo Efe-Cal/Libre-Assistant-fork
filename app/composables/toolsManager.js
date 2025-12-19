@@ -203,6 +203,83 @@ class ToolManager {
         }
       }
     );
+
+    // Search Tool
+    this.registerTool(
+      'search',
+      async (args) => {
+        if (!args.q) {
+          throw new Error('Search tool requires a "q" (query) argument');
+        }
+
+        try {
+          const params = new URLSearchParams({
+            q: args.q,
+            count: args.count || 5, // Default to 5 results for AI to avoid context bloat
+            safesearch: args.safesearch || 'moderate',
+          });
+
+          if (args.freshness) {
+            params.append('freshness', args.freshness);
+          }
+
+          const response = await fetch(`/api/search?${params.toString()}`);
+          if (!response.ok) {
+            throw new Error(`Search request failed with status ${response.status}`);
+          }
+
+          const data = await response.json();
+
+          // Format results for the AI
+          if (!data.web || !data.web.results || data.web.results.length === 0) {
+            return {
+              results: [],
+              message: "No results found for query."
+            };
+          }
+
+          return {
+            results: data.web.results.map(r => ({
+              title: r.title,
+              url: r.url,
+              description: r.description,
+              date: r.age // Some results might have age/date
+            })),
+            query: args.q
+          };
+
+        } catch (error) {
+          console.error("Search tool error:", error);
+          throw error;
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "search",
+          description: "Search the web for current information, news, or specific topics. Use this when you need information beyond your knowledge cutoff.",
+          parameters: {
+            type: "object",
+            properties: {
+              q: {
+                type: "string",
+                description: "The search query"
+              },
+              count: {
+                type: "integer",
+                description: "Number of results to return (default 5, max 10)",
+                maximum: 10
+              },
+              freshness: {
+                type: "string",
+                description: "Filter by time: 'pd' (24h), 'pw' (7d), 'pm' (31d), 'py' (365d). Use if user asks for 'recent' or 'latest' news."
+              }
+            },
+            required: ["q"]
+          }
+        }
+      }
+    );
   }
 }
 

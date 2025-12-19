@@ -30,11 +30,21 @@ export const availableModels = [
     category: "Google",
     logo: "/ai_logos/gemini.svg",
     models: [
-
+      {
+        id: "google/gemini-3-flash-preview",
+        name: "Gemini 3 Flash Preview",
+        description: "Preview of frontier-level fast model, distilled from Gemini 3 Pro and optimized for speed.",
+        reasoning: true,
+        vision: true,
+        extra_functions: [],
+        extra_parameters: {
+          reasoning_effort: [["minimal", "low", "medium", "high"], "medium"],
+        }
+      },
       {
         id: "google/gemini-3-pro-preview",
         name: "Gemini 3 Pro Preview",
-        description: "Early access to Google's next-gen, most capable multimodal model.",
+        description: "Early access to Google's next-gen, SOTA multimodal model.",
         reasoning: true,
         vision: true,
         extra_functions: [],
@@ -51,7 +61,6 @@ export const availableModels = [
           reasoning_effort: [["low", "medium", "high"], "medium"],
         }
       },
-
       {
         id: "google/gemini-2.5-flash-lite-preview-09-2025",
         name: "Gemini 2.5 Flash Lite Preview",
@@ -139,7 +148,30 @@ export const availableModels = [
         extra_parameters: {}
       },
     ],
-  }
+  },
+  {
+    category: "Qwen",
+    logo: "/ai_logos/qwen.svg",
+    models: [
+      {
+        id: "qwen/qwen3-next-80b-a3b-instruct",
+        name: "Qwen 3 Next 80B A3B Instruct",
+        description: "Highly-effecient experimental model that punches above its weight",
+        reasoning: false,
+        extra_functions: [],
+        extra_parameters: {}
+      },
+      {
+        id: "qwen/qwen3-vl-235b-a22b-instruct",
+        name: "Qwen 3 VL 235B A22B Instruct",
+        description: "Open-weight vision-language model excelling at document understanding and visual reasoning",
+        vision: true,
+        reasoning: false,
+        extra_functions: [],
+        extra_parameters: {}
+      },
+    ],
+  },
 ];
 
 export default availableModels;
