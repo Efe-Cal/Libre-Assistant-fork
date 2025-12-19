@@ -138,7 +138,7 @@ useHead({
   position: relative;
   justify-content: center;
   overflow-y: scroll;
-  padding: 0 16px
+  padding: 0 16px;
 }
 
 /* Centered content column, no own scroll */

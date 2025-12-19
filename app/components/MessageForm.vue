@@ -733,7 +733,7 @@ defineExpose({ setMessage, toggleReasoning, setReasoningEffort, $el: messageForm
   padding: 0;
   box-sizing: border-box;
   z-index: 10;
-  /* Horizontal alignment & width now come from the parent .chat-column */
+  box-shadow: 0px -5px 15px 10px var(--bg);
 }
 
 .input-area-wrapper {
