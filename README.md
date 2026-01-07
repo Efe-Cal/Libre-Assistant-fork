@@ -7,15 +7,15 @@ Libre Assistant does **not** sell or store user information, and all chat & user
 
 - All data is stored locally on your device. No data is stored on the internet.
 - Full Markdown & LaTeX Support.
-- Support for multiple chats.
+- Image generation support
+- Document upload support
 - Detailed code-blocks, including syntax highlighting, downloading, and a copy button.
 - Customizable with name, occupation, and custom instructions.
-- Reasoning is visible and properly styled.
-- Basic web grounding.
+- Free web search tools through [search.hackclub.com](https://search.hackclub.com).
 - Reasoning effort customizability.
 - Incognito mode to prevent chat history from being saved.
 - Global memory to remember user details/preferences/opinions across chats.
-- Parameter configuration panel with temperature, top_p, seed options, and a web grounding toggle.
+- Parameter configuration panel with temperature, top_p, seed options, and a web search toggle.
 
 ## Todo
 
