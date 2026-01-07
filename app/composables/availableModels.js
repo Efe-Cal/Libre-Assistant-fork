@@ -37,23 +37,42 @@ export function findModelById(models, id) {
 
 export const availableModels = [
   {
-    category: "Moonshot AI",
-    logo: "/ai_logos/moonshot.svg",
+    category: "DeepSeek",
+    logo: "/ai_logos/deepseek.svg",
     models: [
       {
-        id: "moonshotai/kimi-k2-0905",
-        name: "Kimi K2",
-        description: "SOTA open-weights model with exceptional EQ and coding abilities.",
-        reasoning: "moonshotai/kimi-k2-thinking",
+        id: "deepseek/deepseek-v3.2-speciale",
+        name: "DeepSeek V3.2 Speciale",
+        description: "High-compute SOTA variant designed for complex math & STEM tasks.",
+        tool_use: false,
+        reasoning: true,
         extra_functions: [],
         extra_parameters: {}
-      }
+      },
+      {
+        id: "deepseek/deepseek-v3.2",
+        name: "DeepSeek V3.2",
+        description: "Advanced general-purpose model designed with efficiency in mind.",
+        tool_use: false,
+        reasoning: [true, false],
+        extra_functions: [],
+        extra_parameters: {}
+      },
     ],
   },
   {
     category: "Google",
     logo: "/ai_logos/gemini.svg",
     models: [
+      {
+        id: "google/gemini-3-pro-preview",
+        name: "Gemini 3 Pro Preview",
+        description: "Early access to Google's next-gen, SOTA multimodal model.",
+        reasoning: true,
+        vision: true,
+        extra_functions: [],
+        extra_parameters: {}
+      },
       {
         id: "google/gemini-3-flash-preview",
         name: "Gemini 3 Flash Preview",
@@ -64,15 +83,6 @@ export const availableModels = [
         extra_parameters: {
           reasoning_effort: [["minimal", "low", "medium", "high"], "medium"],
         }
-      },
-      {
-        id: "google/gemini-3-pro-preview",
-        name: "Gemini 3 Pro Preview",
-        description: "Early access to Google's next-gen, SOTA multimodal model.",
-        reasoning: true,
-        vision: true,
-        extra_functions: [],
-        extra_parameters: {}
       },
       {
         id: "google/gemini-2.5-flash",
@@ -96,7 +106,41 @@ export const availableModels = [
           reasoning_effort: [["low", "medium", "high"], "medium"],
         }
       },
+      {
+        id: "google/gemini-3-pro-image-preview",
+        name: "Nano Banana Pro (Image)",
+        description: "Advanced image generation model with reasoning capabilities.",
+        tool_use: false,
+        reasoning: false,
+        vision: true,
+        extra_functions: [],
+        extra_parameters: {}
+      },
+      {
+        id: "google/gemini-2.5-flash-image",
+        name: "Nano Banana (Image)",
+        description: "Fast image generation model.",
+        tool_use: false,
+        reasoning: false,
+        vision: true,
+        extra_functions: [],
+        extra_parameters: {}
+      },
     ]
+  },
+  {
+    category: "Moonshot AI",
+    logo: "/ai_logos/moonshot.svg",
+    models: [
+      {
+        id: "moonshotai/kimi-k2-0905",
+        name: "Kimi K2",
+        description: "SOTA open-weights model with exceptional EQ and coding abilities.",
+        reasoning: "moonshotai/kimi-k2-thinking",
+        extra_functions: [],
+        extra_parameters: {}
+      }
+    ],
   },
   {
     category: "OpenAI",
@@ -114,16 +158,6 @@ export const availableModels = [
         }
       },
       {
-        id: "openai/gpt-5-mini",
-        name: "GPT-5 Mini",
-        description: "Streamlined version of GPT-5 optimized for lightweight tasks.",
-        reasoning: true,
-        extra_functions: [],
-        extra_parameters: {
-          reasoning_effort: [["low", "medium", "high"], "medium"],
-        }
-      },
-      {
         id: "openai/gpt-oss-120b",
         name: "GPT OSS 120B",
         description: "High-performance open-weights model with exceptional STEM capabilities.",
@@ -133,27 +167,36 @@ export const availableModels = [
           reasoning_effort: [["low", "medium", "high"], "medium"],
         }
       },
+      {
+        id: "openai/gpt-5-mini",
+        name: "GPT-5 Mini",
+        description: "Streamlined version of GPT-5 optimized for lightweight tasks.",
+        reasoning: true,
+        extra_functions: [],
+        extra_parameters: {
+          reasoning_effort: [["low", "medium", "high"], "medium"],
+        }
+      },
     ],
   },
   {
-    category: "DeepSeek",
-    logo: "/ai_logos/deepseek.svg",
+    category: "Qwen",
+    logo: "/ai_logos/qwen.svg",
     models: [
       {
-        id: "deepseek/deepseek-v3.2",
-        name: "DeepSeek V3.2",
-        description: "Advanced general-purpose model designed with efficiency in mind.",
-        tool_use: false,
-        reasoning: [true, false],
+        id: "qwen/qwen3-vl-235b-a22b-instruct",
+        name: "Qwen 3 VL 235B A22B Instruct",
+        description: "Open-weight vision-language model excelling at document understanding and visual reasoning.",
+        vision: true,
+        reasoning: false,
         extra_functions: [],
-        extra_parameters: {}
+        extra_parameters: {},
       },
       {
-        id: "deepseek/deepseek-v3.2-speciale",
-        name: "DeepSeek V3.2 Speciale",
-        description: "High-compute SOTA variant designed for complex math & stem tasks.",
-        tool_use: false,
-        reasoning: true,
+        id: "qwen/qwen3-next-80b-a3b-instruct",
+        name: "Qwen 3 Next 80B A3B Instruct",
+        description: "Highly efficient experimental model that punches above its weight.",
+        reasoning: false,
         extra_functions: [],
         extra_parameters: {}
       },
@@ -164,33 +207,18 @@ export const availableModels = [
     logo: "/ai_logos/zai.svg",
     models: [
       {
-        id: "z-ai/glm-4.6",
-        name: "GLM 4.6",
-        description: "Advanced bilingual model with strong logical reasoning and tool use.",
+        id: "z-ai/glm-4.7",
+        name: "GLM 4.7",
+        description: "SOTA open-weight model excelling at coding and math",
         reasoning: [true, false],
         extra_functions: [],
         extra_parameters: {}
       },
-    ],
-  },
-  {
-    category: "Qwen",
-    logo: "/ai_logos/qwen.svg",
-    models: [
       {
-        id: "qwen/qwen3-next-80b-a3b-instruct",
-        name: "Qwen 3 Next 80B A3B Instruct",
-        description: "Highly-effecient experimental model that punches above its weight",
-        reasoning: false,
-        extra_functions: [],
-        extra_parameters: {}
-      },
-      {
-        id: "qwen/qwen3-vl-235b-a22b-instruct",
-        name: "Qwen 3 VL 235B A22B Instruct",
-        description: "Open-weight vision-language model excelling at document understanding and visual reasoning",
-        vision: true,
-        reasoning: false,
+        id: "z-ai/glm-4.6",
+        name: "GLM 4.6",
+        description: "Reliable bilingual model for reasoning and tool use.",
+        reasoning: [true, false],
         extra_functions: [],
         extra_parameters: {}
       },

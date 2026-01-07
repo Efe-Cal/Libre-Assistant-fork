@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-01-07
+
+### Added
+- Added models (Gemini 3 Pro Image Preview, Gemini 2.5 Flash Image, GLM 4.7)
+- Added full image generation functionality
+- Reasoning and tool use is incorporated into model context
+
+### Fixed
+- Refactored the part system, resulting in more reliable streaming & tool use and fewer gaps between tools in the UI
+- Annotations from documents are now properly stored and passed into model context
+- Images are stored in model context throughout the chat without need to reupload them again
+
 ## [0.4.1] - 2025-12-19
 
 ### Fixed
@@ -13,13 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.0] - 2025-12-19
 
 ### Added
+- Added models (Gemin 3 Flash Preview, Qwen3-Next Instruct, Qwen3-VL-235b Instruct)
 - Implemented search tool/endpoint using search.hackclub.com
 - Added interleaved thinking (think -> tool -> think so on and so forth, allowing for more in-depth research)
 - Implemented chat widgets to show reasoning/tools in chat reliably
 - Added keyboard shortcuts
-
-### Fixed
-- Added models (Gemin 3 Flash Preview, Qwen3-Next Instruct, Qwen3-VL-235b Instruct)
 
 ## [0.3.1] - 2025-12-06
 

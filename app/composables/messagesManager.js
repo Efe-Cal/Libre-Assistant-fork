@@ -3,11 +3,12 @@ import localforage from 'localforage';
 import { createConversation as createNewConversation, storeMessages, deleteConversation as deleteConv } from './storeConversations';
 import { handleIncomingMessage } from './message';
 import { availableModels, findModelById } from './availableModels';
-import { addMemory, modifyMemory, deleteMemory, listMemory } from './memory';
+import { addMemory, modifyMemory, deleteMemory } from './memory';
 import DEFAULT_PARAMETERS from './defaultParameters';
 import { useSettings } from './useSettings';
 import { useGlobalIncognito } from './useGlobalIncognito';
 import { emitter } from './emitter';
+import { PartsBuilder, TimingTracker } from './partsBuilder';
 
 /**
  * Creates a centralized message manager for handling all chat message operations
@@ -141,8 +142,12 @@ export function useMessagesManager(chatPanel) {
    * @param {string} message - The user's message
    * @param {string} originalMessage - The original user message (before any reasoning prepends)
    * @param {Array} attachments - Optional array of file attachments
+   * @param {Object} options - Optional settings
+   * @param {boolean} options.skipUserMessage - If true, don't add user message (already exists in messages array)
    */
-  async function sendMessage(message, originalMessage = null, attachments = []) {
+  async function sendMessage(message, originalMessage = null, attachments = [], options = {}) {
+    const { skipUserMessage = false } = options;
+
     if ((!message.trim() && attachments.length === 0) || isLoading.value) return;
 
     controller.value = new AbortController();
@@ -150,8 +155,11 @@ export function useMessagesManager(chatPanel) {
     isTyping.value = false;
 
     // Add user message using the original message (without /no_think prepended)
+    // Skip if the message was already added (e.g., for initial messages from createNewConversationWithMessage)
     const messageToStore = originalMessage !== null ? originalMessage : message;
-    addUserMessage(messageToStore, attachments);
+    if (!skipUserMessage) {
+      addUserMessage(messageToStore, attachments);
+    }
 
     // Create assistant message
     const assistantMsg = createAssistantMessage();
@@ -207,17 +215,20 @@ export function useMessagesManager(chatPanel) {
         : { effort: savedReasoningEffort }
     };
 
+    // Initialize parts builder and timing tracker (outside try so they're accessible in finally)
+    const partsBuilder = new PartsBuilder();
+    const timing = new TimingTracker(assistantMsg);
+
     try {
       // Pass only the conversation history BEFORE the current user message
       // handleIncomingMessage will add the current user message itself via the query parameter
       // This prevents the user message from being duplicated in the request
+      // Pass full message objects so formatMessageForAPI can access all properties
+      console.log('[messagesManager.js] ========== START: About to create streamGenerator ==========');
+
       const streamGenerator = handleIncomingMessage(
         message,
-        messages.value.filter(msg => msg.complete && msg.content !== messageToStore).map(msg => ({
-          role: msg.role,
-          content: msg.content,
-          annotations: msg.annotations  // Pass annotations for PDF reuse
-        })),
+        messages.value.filter(msg => msg.complete && msg.content !== messageToStore),
         controller.value,
         settingsManager.settings.selected_model_id,
         model_parameters,
@@ -228,175 +239,84 @@ export function useMessagesManager(chatPanel) {
         attachments  // Pass attachments to API
       );
 
-      // Initialize parts array if not exists
-      if (!assistantMsg.parts) {
-        assistantMsg.parts = [];
-      }
+      console.log('[messagesManager.js] streamGenerator created successfully');
+      console.log('[messagesManager.js] streamGenerator type:', typeof streamGenerator);
 
-      // Helper to get or create current part based on type
-      // Tool groups should only include tools of the SAME TYPE that occurred CONSECUTIVELY
-      const ensurePart = (type, toolType = null) => {
-        let lastPart = assistantMsg.parts[assistantMsg.parts.length - 1];
+      console.log('[messagesManager.js] PartsBuilder initialized, about to enter for await loop');
 
-        // For tool groups, we need to check both type and toolType to ensure consecutive same-type tools
-        if (type === 'tool_group') {
-          // Create a new tool group if:
-          // 1. No last part exists, OR
-          // 2. Last part is not a tool_group, OR
-          // 3. Last part is a tool_group but has a different toolType
-          if (!lastPart || lastPart.type !== 'tool_group' || lastPart.toolType !== toolType) {
-            lastPart = {
-              type: 'tool_group',
-              toolType: toolType,  // Store the tool type for this group
-              tools: []
-            };
-            assistantMsg.parts.push(lastPart);
-          }
-        } else {
-          // For other types (content, reasoning), create a new part if type differs
-          if (!lastPart || lastPart.type !== type) {
-            lastPart = { type, content: '' };
-            if (type === 'tool_group') {
-              lastPart.tools = [];
-              delete lastPart.content;
-            }
-            assistantMsg.parts.push(lastPart);
-          }
-        }
-
-        return lastPart;
+      // Helper to update message with Vue reactivity
+      const updateMessageReactivity = () => {
+        const updatedMsg = {
+          ...assistantMsg,
+          parts: partsBuilder.toReactiveArray(),
+          tool_calls: partsBuilder.getAllTools(),
+        };
+        messages.value.splice(messages.value.length - 1, 1, updatedMsg);
       };
 
-      // Track if we've received the first token
-      let firstTokenReceived = false;
+      console.log('[messagesManager.js] ========== ENTERING FOR AWAIT LOOP ==========');
 
       for await (const chunk of streamGenerator) {
-        // Process content - only create part if there's actual content to add
-        if (chunk.content !== null && chunk.content !== undefined && chunk.content !== '') {
-          const part = ensurePart('content');
-          part.content += chunk.content;
+        console.log('[messagesManager.js] Chunk received:', JSON.stringify({
+          hasContent: chunk.content !== null && chunk.content !== undefined && chunk.content !== '',
+          contentType: typeof chunk.content,
+          contentValue: chunk.content,
+          hasImages: !!chunk.images,
+          imagesCount: chunk.images?.length || 0,
+          hasReasoning: chunk.reasoning !== null && chunk.reasoning !== undefined,
+          hasToolCalls: !!chunk.tool_calls && chunk.tool_calls.length > 0,
+          chunkKeys: Object.keys(chunk)
+        }));
 
+        // Process content
+        if (chunk.content) {
+          partsBuilder.appendContent(chunk.content);
           assistantMsg.content = (assistantMsg.content || '') + chunk.content;
+          timing.markFirstToken();
+          timing.endReasoning();
+        }
 
-          // Track first token time
-          if (!firstTokenReceived) {
-            assistantMsg.firstTokenTime = new Date();
-            firstTokenReceived = true;
-          }
-
-          // Token counting is now handled by the usage object from OpenRouter API
-
-          if (
-            assistantMsg.reasoningStartTime !== null &&
-            assistantMsg.reasoningEndTime === null
-          ) {
-            assistantMsg.reasoningEndTime = new Date();
+        // Process images
+        if (chunk.images && chunk.images.length > 0) {
+          console.log('[messagesManager.js] Images found:', JSON.stringify(chunk.images, null, 2));
+          for (const image of chunk.images) {
+            partsBuilder.processImage(image);
           }
         }
 
-        // Process reasoning - only create part if there's actual reasoning to add
-        if (chunk.reasoning !== null && chunk.reasoning !== undefined && chunk.reasoning !== '' && chunk.reasoning.trim() !== 'None') {
-          const part = ensurePart('reasoning');
-          // Check if the accumulated reasoning in the current part is currently only whitespace, and if so, clear it before adding new content
-          if (part.content.trim() === '') {
-            // If the new chunk is not whitespace, replace the entire reasoning content
-            if (chunk.reasoning.trim() !== '') {
-              part.content = chunk.reasoning;
-            } else {
-              // If both the accumulated reasoning and new chunk are whitespace, append them normally
-              part.content += chunk.reasoning;
-            }
-          } else {
-            // If the accumulated reasoning already has non-whitespace content, append normally
-            part.content += chunk.reasoning;
-          }
+        // Process reasoning
+        if (chunk.reasoning && chunk.reasoning.trim() !== 'None') {
+          partsBuilder.appendReasoning(chunk.reasoning);
 
-          // Update the main reasoning field as well for legacy compatibility
-          if (assistantMsg.reasoning.trim() === '') {
-            if (chunk.reasoning.trim() !== '') {
-              assistantMsg.reasoning = chunk.reasoning;
-            } else {
-              assistantMsg.reasoning += chunk.reasoning;
-            }
+          // Update legacy reasoning field
+          if (assistantMsg.reasoning.trim() === '' && chunk.reasoning.trim() !== '') {
+            assistantMsg.reasoning = chunk.reasoning;
           } else {
             assistantMsg.reasoning += chunk.reasoning;
           }
 
-          // Track first token time for reasoning
-          if (!firstTokenReceived) {
-            assistantMsg.firstTokenTime = new Date();
-            firstTokenReceived = true;
-          }
-
-          // Token counting is now handled by the usage object from OpenRouter API
-
-          if (assistantMsg.reasoningStartTime === null) {
-            assistantMsg.reasoningStartTime = new Date();
-          }
+          timing.markFirstToken();
+          timing.startReasoning();
         }
 
-
-        // Process tool calls that come in through the streaming
+        // Process tool calls
         if (chunk.tool_calls && chunk.tool_calls.length > 0) {
           for (const tool of chunk.tool_calls) {
-            // Use the tool's type to determine if it should go in the same group
             const toolType = tool.type || 'function';
-            const groupPart = ensurePart('tool_group', toolType);
-
-            // Find existing tool in the current group
-            const existingToolIndex = groupPart.tools.findIndex(t => t.index === tool.index);
-            let existingTool;
-
-            if (existingToolIndex >= 0) {
-              existingTool = groupPart.tools[existingToolIndex];
-            } else {
-              existingTool = {
-                index: tool.index,
-                id: tool.id || null,
-                type: tool.type || 'function',
-                function: {
-                  name: tool.function?.name || '',
-                  arguments: tool.function?.arguments || ''
-                }
-              };
-              groupPart.tools.push(existingTool);
-
-              // Also add to main tool_calls array for backward compatibility
-              assistantMsg.tool_calls.push(existingTool);
-            }
-
-            // Update existing tool with new information if provided
-            if (tool.function?.name) existingTool.function.name = tool.function.name;
-            if (tool.function?.arguments) existingTool.function.arguments += tool.function.arguments;
-            if (tool.id) existingTool.id = tool.id;
-            if (tool.type) existingTool.type = tool.type;
+            partsBuilder.addOrUpdateTool(toolType, tool);
           }
         }
 
-        // Process tool results (custom event from our message.js)
+        // Process tool results
         if (chunk.tool_result) {
-          const { id, result } = chunk.tool_result;
-          // Find the tool in any part and update it
-          if (assistantMsg.parts) {
-            for (const part of assistantMsg.parts) {
-              if (part.type === 'tool_group') {
-                const tool = part.tools.find(t => t.id === id);
-                if (tool) {
-                  tool.result = result;
-                }
-              }
-            }
-          }
+          partsBuilder.setToolResult(chunk.tool_result.id, chunk.tool_result.result);
         }
 
         // Process usage information from OpenRouter
         if (chunk.usage) {
-          // Update token count using the actual completion tokens from OpenRouter
           if (chunk.usage.completion_tokens !== undefined) {
-            // Set the actual token count from API instead of accumulating
             assistantMsg.tokenCount = chunk.usage.completion_tokens;
           }
-          // Also handle other token counts if available
           if (chunk.usage.total_tokens !== undefined) {
             assistantMsg.totalTokens = chunk.usage.total_tokens;
           }
@@ -411,25 +331,8 @@ export function useMessagesManager(chatPanel) {
           assistantMsg.annotations = chunk.annotations;
         }
 
-        // Update the messages array with a new object to trigger reactivity
-        // Create a new object with a copy of the assistantMsg to ensure reactivity
-        const updatedMsg = {
-          ...assistantMsg,
-          parts: assistantMsg.parts ? [...assistantMsg.parts.map(part => {
-            // For tool groups, copy the tools array
-            if (part.type === 'tool_group') {
-              return { ...part, tools: [...part.tools] };
-            }
-            // For other parts, just copy the part
-            return { ...part };
-          })] : null,
-          tool_calls: [...assistantMsg.tool_calls], // Create a new array to ensure reactivity
-          tokenCount: assistantMsg.tokenCount,
-          totalTokens: assistantMsg.totalTokens,
-          promptTokens: assistantMsg.promptTokens
-        };
-        // Use Vue's array mutation method to ensure reactivity
-        messages.value.splice(messages.value.length - 1, 1, updatedMsg);
+        // Update Vue reactivity
+        updateMessageReactivity();
 
         // Allow Vue to render updates before scrolling
         await new Promise(resolve => setTimeout(resolve, 0));
@@ -439,23 +342,37 @@ export function useMessagesManager(chatPanel) {
         }
       }
 
+      // Store final parts on assistantMsg for persistence
+      assistantMsg.parts = partsBuilder.toArray();
+      assistantMsg.tool_calls = partsBuilder.getAllTools();
+
     } catch (error) {
       console.error('Error in stream processing:', error);
     } finally {
+      console.log('[messagesManager.js] ========== FINALLY BLOCK ==========');
+
+      // Ensure parts are stored from partsBuilder (in case of early error)
+      if (!assistantMsg.parts || assistantMsg.parts.length === 0) {
+        assistantMsg.parts = partsBuilder.toArray();
+        assistantMsg.tool_calls = partsBuilder.getAllTools();
+      }
+
       // Discard reasoning that is entirely whitespace
-      if (assistantMsg.reasoning && assistantMsg.reasoning.trim() === '') {
+      if (assistantMsg.reasoning?.trim() === '') {
         assistantMsg.reasoning = '';
+      }
+
+      // If there are images but no content part, add content part at the beginning
+      if (partsBuilder.hasImagePart() && !partsBuilder.hasContentPart() && assistantMsg.content) {
+        partsBuilder.ensureContentPartFirst(assistantMsg.content);
+        assistantMsg.parts = partsBuilder.toArray();
       }
 
       // Mark message as complete and set completion time
       updateAssistantMessage(assistantMsg, {
         complete: true,
         completionTime: new Date(),
-        reasoningDuration: assistantMsg.reasoningStartTime !== null ?
-          (assistantMsg.reasoningEndTime !== null ?
-            assistantMsg.reasoningEndTime.getTime() - assistantMsg.reasoningStartTime.getTime() :
-            new Date().getTime() - assistantMsg.reasoningStartTime.getTime()) :
-          null
+        reasoningDuration: timing.calculateReasoningDuration()
       });
 
       // Process any memory commands from the completed message content

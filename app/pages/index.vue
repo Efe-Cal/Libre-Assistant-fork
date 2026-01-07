@@ -77,8 +77,7 @@ const {
   toggleIncognito,
   setChatPanel,
   chatPanel, // This is the chat panel ref from the composable
-  createNewConversationWithMessage, // Added new function for creating conversation with first message
-  sendInitialMessageToAI // Added function to send initial message and get AI response
+  createNewConversationWithMessage // Function for creating conversation with first message
 } = useConversation();
 
 // Override sendMessage to create conversation and navigate immediately

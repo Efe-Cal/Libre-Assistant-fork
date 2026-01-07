@@ -482,7 +482,7 @@ function getPartGroups(parts) {
 
   const groups = [];
   let currentGroup = [];
-  let currentGroupType = null; // 'mixed' for reasoning/tool_group, 'content' for content
+  let currentGroupType = null; // 'mixed' for reasoning/tool_group, 'content' for content, 'image' for images
 
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
@@ -490,6 +490,7 @@ function getPartGroups(parts) {
     // Determine if this part should be grouped with the current group
     const isActionPart = (part.type === 'reasoning' || part.type === 'tool_group');
     const isContentPart = (part.type === 'content');
+    const isImagePart = (part.type === 'image');
 
     // If this is an action part (reasoning/tool_group) and we're either starting or continuing an action group
     if (isActionPart) {
@@ -516,6 +517,20 @@ function getPartGroups(parts) {
         currentGroupType = 'content';
       } else {
         // Add to current content group
+        currentGroup.push(part);
+      }
+    }
+    // If this is an image part and we're either starting or continuing an image group
+    else if (isImagePart) {
+      if (currentGroupType !== 'image') {
+        // Start a new image group if we were in a different type
+        if (currentGroup.length > 0) {
+          groups.push({ type: currentGroupType, parts: currentGroup });
+        }
+        currentGroup = [part];
+        currentGroupType = 'image';
+      } else {
+        // Add to current image group
         currentGroup.push(part);
       }
     }
@@ -614,6 +629,33 @@ defineExpose({ scrollToEnd, isAtBottom, chatWrapper });
                               @start="onStreamingMessageStart(message.id)"
                             />
                          </div>
+                      </div>
+
+                      <!-- Image parts -->
+                      <div
+                        v-else-if="group.type === 'image'"
+                        class="part-image"
+                      >
+                        <div class="image-grid">
+                          <template v-for="(part, partIndex) in group.parts" :key="`part-${partIndex}`">
+                            <div
+                              v-for="(image, imageIndex) in part.images"
+                              :key="`image-${partIndex}-${imageIndex}`"
+                              class="image-container"
+                            >
+                              <img
+                                :src="image.url"
+                                :alt="image.revised_prompt || 'Generated image'"
+                                loading="lazy"
+                                @load="console.log('Image loaded')"
+                                @error="console.log('Image failed to load')"
+                              />
+                              <div v-if="image.revised_prompt" class="image-caption">
+                                {{ image.revised_prompt }}
+                              </div>
+                            </div>
+                          </template>
+                        </div>
                       </div>
                     </template>
                   </div>
@@ -1112,8 +1154,6 @@ defineExpose({ scrollToEnd, isAtBottom, chatWrapper });
   border-bottom: none;
 }
 
-
-
 .part-content {
   margin-top: 12px;
   min-height: 20px;
@@ -1123,5 +1163,40 @@ defineExpose({ scrollToEnd, isAtBottom, chatWrapper });
   display: flex;
   flex-direction: column;
   width: 100%;
+}
+
+/* Image part styles */
+.part-image {
+  margin: 12px 0;
+}
+
+.image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.image-container {
+  position: relative;
+  overflow: hidden;
+}
+
+.image-container img {
+  height: auto;
+  display: block;
+  max-height: 300px;
+  object-fit: contain;
+}
+
+.image-caption {
+  padding: 8px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

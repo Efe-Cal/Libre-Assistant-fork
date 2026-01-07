@@ -73,9 +73,7 @@ const {
   newConversation,
   toggleIncognito,
   setChatPanel,
-  chatPanel, // This is the chat panel ref from the composable
-  createNewConversationWithMessage, // Added new function for creating conversation with first message
-  sendInitialMessageToAI // Added function to send initial message and get AI response
+  chatPanel // This is the chat panel ref from the composable
 } = useConversation();
 
 // Get the route and router
@@ -112,8 +110,8 @@ onMounted(async () => {
     await router.replace('/incognito');
 
     // Send the initial message to get AI response
-    // This will handle adding both the user and assistant messages
-    await sendInitialMessageToAI(initialMessage);
+    // In incognito, we use regular sendMessage which will add the user message
+    await sendMessage(initialMessage);
   }
 });
 

@@ -4,11 +4,175 @@
  * and streaming responses using manual fetch() processing.
  */
 
-import { availableModels, findModelById, DEFAULT_MODEL_ID } from '~/composables/availableModels';
-import { generateSystemPrompt } from '~/composables/systemPrompt';
-import { findRelevantMemories } from '~/composables/memory';
-import { toolManager } from '~/composables/toolsManager';
+import {
+  availableModels,
+  findModelById,
+  DEFAULT_MODEL_ID,
+} from "~/composables/availableModels";
+import { generateSystemPrompt } from "~/composables/systemPrompt";
+import { findRelevantMemories } from "~/composables/memory";
+import { toolManager } from "~/composables/toolsManager";
 
+/**
+ * Formats a message object for the API, handling multimodal content including:
+ * - User attachments (images, PDFs)
+ * - Assistant generated images
+ * - Reasoning/thinking content
+ * - Tool calls and results
+ * 
+ * @param {Object} msg - The message object from the messages array
+ * @returns {Object} Formatted message for the API
+ */
+function formatMessageForAPI(msg) {
+  const baseMessage = { role: msg.role };
+
+  // Handle annotations for PDF reuse
+  if (msg.annotations) {
+    baseMessage.annotations = msg.annotations;
+  }
+
+  // User messages: handle attachments
+  if (msg.role === "user") {
+    if (msg.attachments && msg.attachments.length > 0) {
+      const contentParts = [{ type: "text", text: msg.content || "" }];
+
+      for (const attachment of msg.attachments) {
+        if (attachment.type === "image") {
+          contentParts.push({
+            type: "image_url",
+            image_url: { url: attachment.dataUrl }
+          });
+        } else if (attachment.type === "pdf") {
+          contentParts.push({
+            type: "file",
+            file: {
+              filename: attachment.filename,
+              file_data: attachment.dataUrl
+            }
+          });
+        }
+      }
+
+      baseMessage.content = contentParts;
+    } else {
+      baseMessage.content = msg.content || "";
+    }
+    return baseMessage;
+  }
+
+  // Assistant messages: handle parts (reasoning, content, images, tool_calls)
+  if (msg.role === "assistant") {
+    // If message has structured parts, build multimodal content
+    if (msg.parts && msg.parts.length > 0) {
+      const contentParts = [];
+
+      for (const part of msg.parts) {
+        switch (part.type) {
+          case "reasoning":
+            // Include reasoning as a text block with clear markers
+            if (part.content && part.content.trim()) {
+              contentParts.push({
+                type: "text",
+                text: `<thinking>\n${part.content}\n</thinking>`
+              });
+            }
+            break;
+
+          case "content":
+            if (part.content && part.content.trim()) {
+              contentParts.push({
+                type: "text",
+                text: part.content
+              });
+            }
+            break;
+
+          case "image":
+            // Include generated images
+            if (part.images && part.images.length > 0) {
+              for (const img of part.images) {
+                if (img.url) {
+                  contentParts.push({
+                    type: "image_url",
+                    image_url: { url: img.url }
+                  });
+                }
+              }
+            }
+            break;
+
+          case "tool_group":
+            // Tool calls are handled separately via tool_calls field
+            // But we can include a summary of what tools were called
+            if (part.tools && part.tools.length > 0) {
+              const toolSummary = part.tools.map(t => {
+                const name = t.function?.name || "unknown";
+                const hasResult = t.result !== undefined;
+                return `[Tool: ${name}${hasResult ? " (completed)" : ""}]`;
+              }).join("\n");
+
+              contentParts.push({
+                type: "text",
+                text: toolSummary
+              });
+            }
+            break;
+        }
+      }
+
+      // If we have multimodal content, use array format
+      if (contentParts.length > 0) {
+        // Check if we have any non-text parts (images)
+        const hasNonText = contentParts.some(p => p.type !== "text");
+
+        if (hasNonText) {
+          baseMessage.content = contentParts;
+        } else {
+          // If only text parts, combine them into a single string for efficiency
+          baseMessage.content = contentParts.map(p => p.text).join("\n\n");
+        }
+      } else {
+        baseMessage.content = msg.content || "";
+      }
+    } else {
+      // Fallback: use simple content field
+      let content = msg.content || "";
+
+      // Include reasoning if present but no parts structure
+      if (msg.reasoning && msg.reasoning.trim()) {
+        content = `<thinking>\n${msg.reasoning}\n</thinking>\n\n${content}`;
+      }
+
+      baseMessage.content = content;
+    }
+
+    // Include tool_calls if present (for proper API format)
+    if (msg.tool_calls && msg.tool_calls.length > 0) {
+      baseMessage.tool_calls = msg.tool_calls.map(tc => ({
+        id: tc.id,
+        type: tc.type || "function",
+        function: {
+          name: tc.function?.name || "",
+          arguments: tc.function?.arguments || "{}"
+        }
+      }));
+    }
+
+    return baseMessage;
+  }
+
+  // Tool messages (for tool results in conversation)
+  if (msg.role === "tool") {
+    baseMessage.tool_call_id = msg.tool_call_id;
+    baseMessage.name = msg.name;
+    baseMessage.content = msg.content || "";
+    return baseMessage;
+  }
+
+  // Fallback for any other role
+  baseMessage.content = msg.content || "";
+  return baseMessage;
+}
 
 /**
  * Main entry point for processing all incoming user messages for the API interface.
@@ -46,9 +210,18 @@ export async function* handleIncomingMessage(
       throw new Error("Missing required parameters for handleIncomingMessage");
     }
 
+    // Find the selected model info
+    const selectedModelInfo = findModelById(availableModels, selectedModel);
+
+    // Check if the selected model is an image generation model
+    const isImageGenerationModel = selectedModelInfo && (
+      selectedModelInfo.id === 'google/gemini-2.5-flash-image' ||
+      selectedModelInfo.id === 'google/gemini-3-pro-image-preview'
+    );
+
     // Append current date and time to the user's query for awareness.
     // We don't use the system prompt for the time to allow cached input tokens.
-    const currentDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+    const currentDate = new Date().toISOString().split("T")[0]; // YYYY-MM-DD format
     const queryWithDateTime = `<context>\n  <!-- CURRENT DATE ADDED AUTOMATICALLY; ONLY USE THE CURRENT DATE WHEN REQUIRED OR EXPLICITLY TOLD TO USE. -->\n  Current Date: ${currentDate}\n</context>\n\n${query}`;
 
     // Load memory facts if memory is enabled and not in incognito mode
@@ -66,22 +239,21 @@ export async function* handleIncomingMessage(
 
     // Determine which tools are actually being used
     // First, check if the selected model supports tool use (defaults to true if not specified)
-    const selectedModelInfo = findModelById(availableModels, selectedModel);
     const modelHasToolUse = selectedModelInfo?.tool_use !== false; // Default to true unless explicitly false
 
     const enabledToolNames = [];
     if (modelHasToolUse && settings.global_memory_enabled && !isIncognito) {
       enabledToolNames.push(
-        'listMemory',
-        'addMemory',
-        'modifyMemory',
-        'deleteMemory'
+        "listMemory",
+        "addMemory",
+        "modifyMemory",
+        "deleteMemory"
       );
     }
 
     // Enable search tool if enabled in settings/params
     if (modelHasToolUse && isSearchEnabled) {
-      enabledToolNames.push('search');
+      enabledToolNames.push("search");
     }
 
     // Generate system prompt based on settings and used tools
@@ -100,28 +272,26 @@ export async function* handleIncomingMessage(
 
     if (attachments && attachments.length > 0) {
       // Multimodal message format with content parts
-      const contentParts = [
-        { type: 'text', text: queryWithDateTime }
-      ];
+      const contentParts = [{ type: "text", text: queryWithDateTime }];
 
       for (const attachment of attachments) {
-        if (attachment.type === 'image') {
+        if (attachment.type === "image") {
           // Image format for vision models
           contentParts.push({
-            type: 'image_url',
+            type: "image_url",
             image_url: {
-              url: attachment.dataUrl
-            }
+              url: attachment.dataUrl,
+            },
           });
-        } else if (attachment.type === 'pdf') {
+        } else if (attachment.type === "pdf") {
           // PDF format - uses file-parser plugin with mistral-ocr
           hasPDFAttachments = true;
           contentParts.push({
-            type: 'file',
+            type: "file",
             file: {
               filename: attachment.filename,
-              file_data: attachment.dataUrl
-            }
+              file_data: attachment.dataUrl,
+            },
           });
         }
       }
@@ -133,17 +303,10 @@ export async function* handleIncomingMessage(
     }
 
     // Build base messages for this user turn
-    // History messages may have complex content (arrays) or annotations
+    // History messages are formatted with full multimodal support (images, reasoning, tool calls)
     const baseMessages = [
       { role: "system", content: systemPrompt },
-      ...plainMessages.map(m => {
-        const msg = { role: m.role, content: m.content };
-        // Include annotations for PDF reuse (cost optimization)
-        if (m.annotations) {
-          msg.annotations = m.annotations;
-        }
-        return msg;
-      }),
+      ...plainMessages.map(formatMessageForAPI),
       { role: "user", content: userMessageContent },
     ];
 
@@ -163,10 +326,7 @@ export async function* handleIncomingMessage(
 
     while (true) {
       // Build messages for this call
-      const messagesForThisCall = [
-        ...baseMessages,
-        ...intermediateMessages,
-      ];
+      const messagesForThisCall = [...baseMessages, ...intermediateMessages];
 
       // Build request body for this call
       const plugins = [];
@@ -191,32 +351,39 @@ export async function* handleIncomingMessage(
       // Add reasoning parameters only if the model supports reasoning
       if (selectedModelInfo) {
         // Handle models with reasoning: string (route requests to another model when reasoning is enabled)
-        if (typeof selectedModelInfo.reasoning === 'string') {
+        if (typeof selectedModelInfo.reasoning === "string") {
           // Use the reasoning model when reasoning is enabled (effort is not 'none' or not specified)
-          if (!modelParameters?.reasoning?.effort || modelParameters.reasoning.effort !== 'none') {
+          if (
+            modelParameters?.reasoning?.effort ||
+            modelParameters.reasoning.effort !== "none"
+          ) {
             requestBody.model = selectedModelInfo.reasoning;
           }
           // Otherwise, use the original selected model
         }
         // Handle models with reasoning: [true, false] (toggleable reasoning)
-        else if (Array.isArray(selectedModelInfo.reasoning) &&
+        else if (
+          Array.isArray(selectedModelInfo.reasoning) &&
           selectedModelInfo.reasoning.length === 2 &&
           selectedModelInfo.reasoning[0] === true &&
-          selectedModelInfo.reasoning[1] === false) {
+          selectedModelInfo.reasoning[1] === false
+        ) {
           // Add reasoning with enabled flag based on model parameters for other models
           requestBody.reasoning = {
-            enabled: modelParameters?.reasoning?.effort !== 'none'
+            enabled: modelParameters?.reasoning?.effort !== "none",
           };
         }
         // Handle models with reasoning: true - these have reasoning capabilities but no toggle
         else if (selectedModelInfo.reasoning === true) {
           // Special case for deepseek-v3.2-speciale: always send reasoning.enabled=true
-          if (selectedModel === 'deepseek/deepseek-v3.2-speciale') {
+          if (selectedModel === "deepseek/deepseek-v3.2-speciale") {
             requestBody.reasoning = { enabled: true };
           }
           // Add reasoning_effort if specified in model parameters
           else if (modelParameters?.reasoning?.effort) {
-            requestBody.reasoning = { effort: modelParameters.reasoning.effort };
+            requestBody.reasoning = {
+              effort: modelParameters.reasoning.effort,
+            };
           }
         }
         // For models with reasoning: false, don't add any reasoning parameters
@@ -234,7 +401,9 @@ export async function* handleIncomingMessage(
         const errorData = await response.json().catch(() => ({}));
         const errorMessage = errorData.error?.message || "Unknown error";
 
-        throw new Error(`API request failed with status ${response.status}: ${errorMessage}`);
+        throw new Error(
+          `API request failed with status ${response.status}: ${errorMessage}`
+        );
       }
 
       const reader = response.body.getReader();
@@ -290,6 +459,20 @@ export async function* handleIncomingMessage(
             if (parsed.choices && parsed.choices[0]) {
               const choice = parsed.choices[0];
 
+              console.log(
+                "Choice structure:",
+                JSON.stringify(parsed.choices[0], null, 2)
+              );
+              console.log(
+                "Has images in delta:",
+                !!parsed.choices[0].delta?.images
+              );
+              console.log(
+                "Has images in message:",
+                !!parsed.choices[0].message?.images
+              );
+              console.log("Has images in parsed:", !!parsed.images);
+
               // 1) Accumulate tool_calls
               if (choice.delta?.tool_calls) {
                 hadToolCalls = true;
@@ -309,7 +492,8 @@ export async function* handleIncomingMessage(
                     existing.function.name = toolCallDelta.function.name;
                   }
                   if (toolCallDelta.function?.arguments) {
-                    existing.function.arguments += toolCallDelta.function.arguments;
+                    existing.function.arguments +=
+                      toolCallDelta.function.arguments;
                   }
 
                   toolCallAccumulator[index] = existing;
@@ -321,9 +505,7 @@ export async function* handleIncomingMessage(
                 finishedReason = choice.finish_reason;
               }
 
-              // 3) Yield content & reasoning like before
-              let contentYielded = false;
-
+              // 3) Yield content
               if (choice.delta?.content) {
                 // If we have reasoning enabled and we're getting text content,
                 // this means the reasoning phase is complete
@@ -340,9 +522,9 @@ export async function* handleIncomingMessage(
                   reasoning: null,
                   tool_calls: choice.delta?.tool_calls || [],
                 };
-                contentYielded = true;
               }
 
+              // 4) Yield reasoning
               if (choice.delta?.reasoning) {
                 // Track when reasoning starts
                 if (!reasoningStartTime) {
@@ -354,10 +536,10 @@ export async function* handleIncomingMessage(
                   reasoning: choice.delta.reasoning,
                   tool_calls: choice.delta?.tool_calls || [],
                 };
-                contentYielded = true;
               }
 
-              if (!contentYielded && choice.delta?.tool_calls) {
+              // 5) Yield tool calls delta if present
+              if (choice.delta?.tool_calls) {
                 yield {
                   content: null,
                   reasoning: null,
@@ -365,6 +547,7 @@ export async function* handleIncomingMessage(
                 };
               }
 
+              // 6) Yield usage if present
               if (parsed.usage) {
                 yield {
                   content: null,
@@ -374,9 +557,9 @@ export async function* handleIncomingMessage(
                 };
               }
 
-              // Capture annotations from the response (for PDF reuse)
-              // Annotations may come in different places depending on the response format
-              const annotations = choice.message?.annotations ||
+              // 7) Capture annotations (for PDF reuse)
+              const annotations =
+                choice.message?.annotations ||
                 choice.delta?.annotations ||
                 parsed.annotations;
               if (annotations) {
@@ -385,6 +568,25 @@ export async function* handleIncomingMessage(
                   reasoning: null,
                   tool_calls: [],
                   annotations: annotations,
+                };
+              }
+
+              // First check delta (for streaming image chunks)
+              const images =
+                choice.delta?.images;
+
+              if (images && images.length > 0) {
+                console.log('[message.js] Yielding images:', JSON.stringify(images, null, 2));
+                yield {
+                  content:
+                    choice.delta?.content !== undefined
+                      ? choice.delta.content
+                      : choice.message?.content !== undefined
+                        ? choice.message.content
+                        : null,
+                  reasoning: null,
+                  tool_calls: [],
+                  images: images,
                 };
               }
             }
@@ -414,15 +616,18 @@ export async function* handleIncomingMessage(
       }
 
       // Execute tools locally and append tool messages
-      const toolResultMessages = await executeToolCallsLocally(completedToolCalls, plainMessages);
+      const toolResultMessages = await executeToolCallsLocally(
+        completedToolCalls,
+        plainMessages
+      );
 
       // Yield tool results so the UI can update the widgets
       for (const toolMsg of toolResultMessages) {
         yield {
           tool_result: {
             id: toolMsg.tool_call_id,
-            result: toolMsg.content
-          }
+            result: toolMsg.content,
+          },
         };
       }
 
@@ -431,7 +636,7 @@ export async function* handleIncomingMessage(
         {
           role: "assistant",
           content: "", // Empty string instead of null to satisfy OpenRouter validation
-          tool_calls: completedToolCalls.map(tc => ({
+          tool_calls: completedToolCalls.map((tc) => ({
             id: tc.id,
             type: tc.type,
             function: {
@@ -440,12 +645,11 @@ export async function* handleIncomingMessage(
             },
           })),
         },
-        ...toolResultMessages,
+        ...toolResultMessages
       );
 
       // Loop again: next iteration will call the model with updated messages
     }
-
   } catch (error) {
     // Handle abort errors specifically
     if (error.name === "AbortError") {
@@ -467,9 +671,11 @@ export async function* handleIncomingMessage(
   }
 }
 
-
 // Helper function to execute tool calls locally with toolManager
-async function executeToolCallsLocally(completedToolCalls, messageHistory = []) {
+async function executeToolCallsLocally(
+  completedToolCalls,
+  messageHistory = []
+) {
   const toolResultMessages = [];
 
   for (const toolCall of completedToolCalls) {
@@ -479,7 +685,11 @@ async function executeToolCallsLocally(completedToolCalls, messageHistory = []) 
     try {
       args = JSON.parse(toolCall.function.arguments || "{}");
     } catch (err) {
-      console.error("Failed to parse tool arguments:", toolCall.function.arguments, err);
+      console.error(
+        "Failed to parse tool arguments:",
+        toolCall.function.arguments,
+        err
+      );
     }
 
     const tool = toolManager.getTool(name);
@@ -489,7 +699,7 @@ async function executeToolCallsLocally(completedToolCalls, messageHistory = []) 
         role: "tool",
         tool_call_id: toolCall.id,
         name,
-        content: `{"error": "Unknown tool '${name}'"}`
+        content: `{"error": "Unknown tool '${name}'"}`,
       });
       continue;
     }
@@ -510,7 +720,7 @@ async function executeToolCallsLocally(completedToolCalls, messageHistory = []) 
         tool_call_id: toolCall.id,
         name,
         content: JSON.stringify({
-          error: `Tool execution failed: ${err.message || String(err)}`
+          error: `Tool execution failed: ${err.message || String(err)}`,
         }),
       });
     }

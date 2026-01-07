@@ -76,8 +76,7 @@ const {
   newConversation,
   toggleIncognito,
   setChatPanel,
-  chatPanel, // This is the chat panel ref from the composable
-  sendInitialMessageToAI // Function to send initial message without duplicating user message
+  chatPanel // This is the chat panel ref from the composable
 } = useConversation();
 
 const messageFormRef = ref(null); // Reference to the MessageForm component
@@ -101,10 +100,11 @@ onMounted(async () => {
   await nextTick();
   if (messages.value.length === 1 && messages.value[0].role === 'user') {
     // This is a new conversation with only the initial user message
-    // Automatically trigger the AI response using sendInitialMessageToAI
-    // which has built-in duplicate detection to avoid adding the user message again
+    // Automatically trigger the AI response using sendMessage with skipUserMessage
+    // since the user message was already added by createNewConversationWithMessage
     const userMessage = messages.value[0].content;
-    await sendInitialMessageToAI(userMessage);
+    const userAttachments = messages.value[0].attachments || [];
+    await sendMessage(userMessage, null, userAttachments, { skipUserMessage: true });
   }
 });
 

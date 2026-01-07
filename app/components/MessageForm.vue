@@ -344,6 +344,7 @@ async function submitMessage() {
 
   // Emit both the processed message (for API request) and original message (for storage)
   // Include attachments in the emission
+
   emit("send-message", processedMessage, originalMessage, toRaw(attachments.value));
   inputMessage.value = "";
   // Clear attachments after sending

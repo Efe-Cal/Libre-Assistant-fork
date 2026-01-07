@@ -95,7 +95,7 @@ const mod = isMac ? keys.meta : keys.ctrl;
 const route = useRoute(); // Get current route
 const router = useRouter();
 
-const sidebarOpen = ref(false); // Set to false initially, will be updated in onMounted
+const sidebarOpen = ref(true); // Set to false initially, will be updated in onMounted
 const parameterConfigPanelOpen = ref(false);
 const isSettingsOpen = ref(false);
 const settingsInitialTab = ref('general'); // Controls which tab opens in settings panel
