@@ -101,22 +101,7 @@ function formatMessageForAPI(msg) {
             }
             break;
 
-          case "tool_group":
-            // Tool calls are handled separately via tool_calls field
-            // But we can include a summary of what tools were called
-            if (part.tools && part.tools.length > 0) {
-              const toolSummary = part.tools.map(t => {
-                const name = t.function?.name || "unknown";
-                const hasResult = t.result !== undefined;
-                return `[Tool: ${name}${hasResult ? " (completed)" : ""}]`;
-              }).join("\n");
 
-              contentParts.push({
-                type: "text",
-                text: toolSummary
-              });
-            }
-            break;
         }
       }
 
@@ -146,16 +131,16 @@ function formatMessageForAPI(msg) {
       baseMessage.content = content;
     }
 
-    // Include tool_calls if present (for proper API format)
-    if (msg.tool_calls && msg.tool_calls.length > 0) {
-      baseMessage.tool_calls = msg.tool_calls.map(tc => ({
-        id: tc.id,
-        type: tc.type || "function",
-        function: {
-          name: tc.function?.name || "",
-          arguments: tc.function?.arguments || "{}"
-        }
-      }));
+
+
+    // If message is effectively empty after stripping tool calls, return null
+    const hasContent = baseMessage.content && (
+      (Array.isArray(baseMessage.content) && baseMessage.content.length > 0) ||
+      (typeof baseMessage.content === 'string' && baseMessage.content.trim().length > 0)
+    );
+
+    if (!hasContent) {
+      return null;
     }
 
     return baseMessage;
@@ -163,10 +148,7 @@ function formatMessageForAPI(msg) {
 
   // Tool messages (for tool results in conversation)
   if (msg.role === "tool") {
-    baseMessage.tool_call_id = msg.tool_call_id;
-    baseMessage.name = msg.name;
-    baseMessage.content = msg.content || "";
-    return baseMessage;
+    return null; // Skip tool messages in history to maintain validity after stripping tool_calls
   }
 
   // Fallback for any other role
@@ -210,19 +192,24 @@ export async function* handleIncomingMessage(
       throw new Error("Missing required parameters for handleIncomingMessage");
     }
 
+    // Check if API is up
+    try {
+      const healthResponse = await fetch("/api/api_health");
+      const health = await healthResponse.json();
+      if (health && health.status === "down") {
+        yield {
+          content: "API is not up. Please try again later.",
+          reasoning: null
+        };
+        return;
+      }
+    } catch (error) {
+      console.error("Health check failed:", error);
+      // We'll continue anyway, in case it was just the health check endpoint failing
+    }
+
     // Find the selected model info
     const selectedModelInfo = findModelById(availableModels, selectedModel);
-
-    // Check if the selected model is an image generation model
-    const isImageGenerationModel = selectedModelInfo && (
-      selectedModelInfo.id === 'google/gemini-2.5-flash-image' ||
-      selectedModelInfo.id === 'google/gemini-3-pro-image-preview'
-    );
-
-    // Append current date and time to the user's query for awareness.
-    // We don't use the system prompt for the time to allow cached input tokens.
-    const currentDate = new Date().toISOString().split("T")[0]; // YYYY-MM-DD format
-    const queryWithDateTime = `<context>\n  <!-- CURRENT DATE ADDED AUTOMATICALLY; ONLY USE THE CURRENT DATE WHEN REQUIRED OR EXPLICITLY TOLD TO USE. -->\n  Current Date: ${currentDate}\n</context>\n\n${query}`;
 
     // Load memory facts if memory is enabled and not in incognito mode
     let memoryFacts = [];
@@ -268,11 +255,10 @@ export async function* handleIncomingMessage(
 
     // Build user message content based on attachments
     let userMessageContent;
-    let hasPDFAttachments = false;
 
     if (attachments && attachments.length > 0) {
       // Multimodal message format with content parts
-      const contentParts = [{ type: "text", text: queryWithDateTime }];
+      const contentParts = [{ type: "text", text: query }];
 
       for (const attachment of attachments) {
         if (attachment.type === "image") {
@@ -299,14 +285,14 @@ export async function* handleIncomingMessage(
       userMessageContent = contentParts;
     } else {
       // Simple text message
-      userMessageContent = queryWithDateTime;
+      userMessageContent = query;
     }
 
     // Build base messages for this user turn
     // History messages are formatted with full multimodal support (images, reasoning, tool calls)
     const baseMessages = [
       { role: "system", content: systemPrompt },
-      ...plainMessages.map(formatMessageForAPI),
+      ...plainMessages.map(formatMessageForAPI).filter(m => m !== null),
       { role: "user", content: userMessageContent },
     ];
 

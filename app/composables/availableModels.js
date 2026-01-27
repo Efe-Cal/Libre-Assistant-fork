@@ -11,7 +11,7 @@
  * For models with [true, false], the API will receive reasoning: {enabled: true/false}
  * based on toggle state.
  */
-export const DEFAULT_MODEL_ID = "moonshotai/kimi-k2-0905";
+export const DEFAULT_MODEL_ID = "moonshotai/kimi-k2.5";
 
 /**
  * Finds a model by its ID in the available models list, including nested categories.
@@ -125,13 +125,21 @@ export const availableModels = [
     logo: "/ai_logos/moonshot.svg",
     models: [
       {
+        id: "moonshotai/kimi-k2.5",
+        name: "Kimi K2.5",
+        description: "SOTA open-weights model with exceptional EQ, coding, and agentic abilities.",
+        reasoning: [true, false],
+        extra_functions: [],
+        extra_parameters: {}
+      },
+      {
         id: "moonshotai/kimi-k2-0905",
         name: "Kimi K2",
-        description: "Frontier open-weights model with exceptional EQ and coding abilities.",
+        description: "Older open-weights model with great EQ and coding abilities.",
         reasoning: "moonshotai/kimi-k2-thinking",
         extra_functions: [],
         extra_parameters: {}
-      }
+      },
     ],
   },
   {
@@ -240,7 +248,15 @@ export const availableModels = [
       {
         id: "z-ai/glm-4.7",
         name: "GLM 4.7",
-        description: "SOTA open-weight model excelling at coding and math",
+        description: "Frontier open-weight model excelling at coding and math",
+        reasoning: [true, false],
+        extra_functions: [],
+        extra_parameters: {}
+      },
+      {
+        id: "z-ai/glm-4.7-flash",
+        name: "GLM 4.7 Flash",
+        description: "SOTA 30B-class model with excelent agentic capabilities",
         reasoning: [true, false],
         extra_functions: [],
         extra_parameters: {}

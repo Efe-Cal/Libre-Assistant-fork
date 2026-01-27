@@ -89,7 +89,7 @@ async function generateTitleInBackground(conversationId, plainMessages, lastUpda
             content: msg.content,
           })),
         ],
-        model: "google/gemini-2.5-flash",
+        model: "z-ai/glm-4.7-flash",
         stream: false,
       }),
     });

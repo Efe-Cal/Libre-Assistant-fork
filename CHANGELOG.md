@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-01-27
+
+### Fixed
+- Improved error handling and added API health endpoint to better catch when the API is down
+- Improved caching and model context handling by moving the current time from user prompt to system prompt
+- Added models (Kimi K2.5, GLM 4.7 Flash)
+- Replaced Gemini 2.5 Flash to GLM 4.7 Flash for conversation title generation
+- Replaced default LLM from Kimi K2 to Kimi K2.5
+- Improved memory tool reliability
+- Polished system prompt to better instruct model to use memory tools
+
 ## [0.6.1] - 2026-01-25
 
 ### Fixed
