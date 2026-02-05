@@ -69,7 +69,6 @@ function formatMessageForAPI(msg) {
       for (const part of msg.parts) {
         switch (part.type) {
           case "reasoning":
-            // Include reasoning as a text block with clear markers
             if (part.content && part.content.trim()) {
               contentParts.push({
                 type: "text",
@@ -88,7 +87,6 @@ function formatMessageForAPI(msg) {
             break;
 
           case "image":
-            // Include generated images
             if (part.images && part.images.length > 0) {
               for (const img of part.images) {
                 if (img.url) {
@@ -100,46 +98,41 @@ function formatMessageForAPI(msg) {
               }
             }
             break;
-
-
         }
       }
 
-      // If we have multimodal content, use array format
       if (contentParts.length > 0) {
-        // Check if we have any non-text parts (images)
         const hasNonText = contentParts.some(p => p.type !== "text");
-
         if (hasNonText) {
           baseMessage.content = contentParts;
         } else {
-          // If only text parts, combine them into a single string for efficiency
           baseMessage.content = contentParts.map(p => p.text).join("\n\n");
         }
       } else {
         baseMessage.content = msg.content || "";
       }
     } else {
-      // Fallback: use simple content field
       let content = msg.content || "";
-
-      // Include reasoning if present but no parts structure
       if (msg.reasoning && msg.reasoning.trim()) {
         content = `<thinking>\n${msg.reasoning}\n</thinking>\n\n${content}`;
       }
-
       baseMessage.content = content;
     }
 
+    // CRITICAL: Include tool calls in assistant messages for history
+    if (msg.tool_calls && msg.tool_calls.length > 0) {
+      baseMessage.tool_calls = JSON.parse(JSON.stringify(msg.tool_calls));
+    }
 
-
-    // If message is effectively empty after stripping tool calls, return null
-    const hasContent = baseMessage.content && (
+    // Allow message even if content is empty but it has tool calls
+    const hasContent = (baseMessage.content && (
       (Array.isArray(baseMessage.content) && baseMessage.content.length > 0) ||
       (typeof baseMessage.content === 'string' && baseMessage.content.trim().length > 0)
-    );
+    ));
 
-    if (!hasContent) {
+    const hasToolCalls = baseMessage.tool_calls && baseMessage.tool_calls.length > 0;
+
+    if (!hasContent && !hasToolCalls) {
       return null;
     }
 
@@ -148,7 +141,12 @@ function formatMessageForAPI(msg) {
 
   // Tool messages (for tool results in conversation)
   if (msg.role === "tool") {
-    return null; // Skip tool messages in history to maintain validity after stripping tool_calls
+    return {
+      role: "tool",
+      tool_call_id: msg.tool_call_id,
+      name: msg.name,
+      content: msg.content || ""
+    };
   }
 
   // Fallback for any other role
@@ -192,15 +190,24 @@ export async function* handleIncomingMessage(
       throw new Error("Missing required parameters for handleIncomingMessage");
     }
 
-    // Check if API is up
+    // Check if API is up and has available quota
     try {
       const healthResponse = await fetch("/api/api_health");
       const health = await healthResponse.json();
-      if (health && health.status === "down") {
-        yield {
-          content: "API is not up. Please try again later.",
-          reasoning: null
-        };
+
+      // Check for various unavailability conditions
+      if (health.status === "down" || health.dailyKeyUsageRemaining <= 0 || health.balanceRemaining <= 0) {
+        let message = "⚠️ **Service Unavailable**\n\n";
+
+        if (health.dailyKeyUsageRemaining !== undefined && health.dailyKeyUsageRemaining <= 0) {
+          message += "Daily API budget exhausted. Try again tomorrow or add your own API key in Settings → General.";
+        } else if (health.balanceRemaining !== undefined && health.balanceRemaining <= 0) {
+          message += "API balance depleted. Service temporarily unavailable.";
+        } else {
+          message += "Service temporarily unavailable. Please try again later.";
+        }
+
+        yield { content: message, reasoning: null };
         return;
       }
     } catch (error) {
@@ -271,7 +278,6 @@ export async function* handleIncomingMessage(
           });
         } else if (attachment.type === "pdf") {
           // PDF format - uses file-parser plugin with mistral-ocr
-          hasPDFAttachments = true;
           contentParts.push({
             type: "file",
             file: {
@@ -307,7 +313,8 @@ export async function* handleIncomingMessage(
     // Agent loop config
     // Model supports tools only if it has tool_use enabled AND there are tools available
     const modelSupportsTools = modelHasToolUse && enabledToolSchemas.length > 0;
-    const maxToolIterations = settings.tool_max_iterations ?? 4;
+    // No default limit - let models iterate as needed. User can set limit in settings if desired.
+    const maxToolIterations = settings.tool_max_iterations ?? Infinity;
     let iteration = 0;
 
     while (true) {
@@ -407,10 +414,28 @@ export async function* handleIncomingMessage(
       let reasoningStarted = false;
       let reasoningStartTime = null;
 
+      // Stream timeout configuration (60 seconds of inactivity)
+      const STREAM_TIMEOUT_MS = 60000;
+      let streamTimeoutId = null;
+
+      const resetStreamTimeout = () => {
+        if (streamTimeoutId) clearTimeout(streamTimeoutId);
+        streamTimeoutId = setTimeout(() => {
+          reader.cancel("Stream timeout: no data received for 60 seconds");
+        }, STREAM_TIMEOUT_MS);
+      };
+
+      const clearStreamTimeout = () => {
+        if (streamTimeoutId) clearTimeout(streamTimeoutId);
+      };
+
       try {
+        resetStreamTimeout(); // Start the timeout
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+
+          resetStreamTimeout(); // Reset timeout on each chunk received
 
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split("\n");
@@ -571,6 +596,7 @@ export async function* handleIncomingMessage(
           }
         }
       } finally {
+        clearStreamTimeout();
         reader.releaseLock();
       }
 
@@ -663,6 +689,14 @@ async function executeToolCallsLocally(
         toolCall.function.arguments,
         err
       );
+      // Return error to model instead of executing with empty/malformed args
+      toolResultMessages.push({
+        role: "tool",
+        tool_call_id: toolCall.id,
+        name,
+        content: JSON.stringify({ error: `Invalid JSON in tool arguments: ${err.message}` }),
+      });
+      continue;
     }
 
     const tool = toolManager.getTool(name);

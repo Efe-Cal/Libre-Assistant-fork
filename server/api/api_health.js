@@ -5,12 +5,18 @@ export default defineEventHandler(async (event) => {
         const response = await fetch("https://ai.hackclub.com/up");
 
         if (!response.ok) {
-            return { status: "down" };
+            return { status: "down", reason: "api_unreachable" };
         }
 
         const data = await response.json();
-        return data;
+        // Return full data for client-side decision making
+        return {
+            status: data.status || "up",
+            dailyKeyUsageRemaining: data.dailyKeyUsageRemaining,
+            balanceRemaining: data.balanceRemaining,
+            timestamp: data.timestamp
+        };
     } catch (error) {
-        return { status: "down" };
+        return { status: "down", reason: "network_error" };
     }
 });

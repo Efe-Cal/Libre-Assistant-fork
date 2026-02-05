@@ -2,17 +2,18 @@ import localforage from "localforage";
 import { emitter } from "~/composables/emitter";
 import { migrateMessages } from "./branchManager";
 
-export async function createConversation(plainMessages, lastUpdated) {
-  const conversationId = crypto.randomUUID();
-
-  // Ensure that the messages are in a format suitable for storage,
-  // Without this, an error occurs.
-  // Use JSON.parse(JSON.stringify()) to deep clone and remove Vue reactive proxies
-  let rawMessages = plainMessages.map((msg) => ({
-    id: msg.id, // Include all necessary properties
+/**
+ * Serializes a message object for storage, removing Vue reactivity proxies
+ * and ensuring all data is JSON-serializable.
+ * @param {Object} msg - The message object to serialize
+ * @returns {Object} Serialized message ready for storage
+ */
+function serializeMessage(msg) {
+  return {
+    id: msg.id,
     role: msg.role,
     content: msg.content,
-    timestamp: msg.timestamp, // Date objects are fine here
+    timestamp: msg.timestamp,
     complete: msg.complete,
     // Branching metadata
     parentId: msg.parentId ?? null,
@@ -29,43 +30,38 @@ export async function createConversation(plainMessages, lastUpdated) {
       reasoningDuration: msg.reasoningDuration,
       tool_calls: msg.tool_calls
         ? JSON.parse(JSON.stringify(msg.tool_calls))
-        : [], // Ensure tool_calls are serializable
-      // New timing properties
+        : [],
       apiCallTime: msg.apiCallTime,
       firstTokenTime: msg.firstTokenTime,
       completionTime: msg.completionTime,
-      // Token counting
       tokenCount: msg.tokenCount,
-      // Annotations for reuse
       annotations: msg.annotations ? JSON.parse(JSON.stringify(msg.annotations)) : null,
-      // Timeline parts for interleaved rendering
       parts: msg.parts ? JSON.parse(JSON.stringify(msg.parts)) : null,
     }),
-    // Add any other properties your message objects might have
-  }));
+  };
+}
 
-  const title = "Untitled";  // Set as Untitled initially
+export async function createConversation(plainMessages, lastUpdated) {
+  const conversationId = crypto.randomUUID();
+  const rawMessages = plainMessages.map(serializeMessage);
+  const title = "Untitled";
 
   try {
-    // Store full conversation immediately with Untitled title
     await localforage.setItem(`conversation_${conversationId}`, {
       title,
       lastUpdated,
       messages: rawMessages,
-      branchPath: [], // Initialize with empty branch path (follow first branch at each fork)
+      branchPath: [],
     });
 
-    // Store metadata separately (only ID, title, and timestamp)
     const metadata =
       (await localforage.getItem("conversations_metadata")) || [];
     metadata.push({ id: conversationId, title, lastUpdated });
     await localforage.setItem("conversations_metadata", metadata);
 
     emitter.emit("updateConversations");
-
     console.log("Conversation saved successfully with Untitled title!");
 
-    // Now generate title in the background
     generateTitleInBackground(conversationId, plainMessages, lastUpdated);
 
     return conversationId;
@@ -140,54 +136,16 @@ export async function storeMessages(
   plainMessages,
   lastUpdated
 ) {
-  // Attempt to get the existing conversation data.
   const data = await localforage.getItem(`conversation_${conversationId}`);
   if (!data) {
     console.warn(`No conversation found for id ${conversationId}.`);
     return;
   }
 
-  // Use JSON.parse(JSON.stringify()) to deep clone and remove Vue reactive proxies
-  let rawMessages = plainMessages.map((msg) => ({
-    id: msg.id, // Include all necessary properties
-    role: msg.role,
-    content: msg.content,
-    timestamp: msg.timestamp, // Date objects are fine here
-    complete: msg.complete,
-    // Branching metadata
-    parentId: msg.parentId ?? null,
-    branchIndex: msg.branchIndex ?? 0,
-    // Add attachments for user messages (deep clone to remove reactive proxies)
-    ...(msg.role === "user" && msg.attachments && msg.attachments.length > 0 && {
-      attachments: JSON.parse(JSON.stringify(msg.attachments)),
-    }),
-    // Add reasoning properties for assistant messages
-    ...(msg.role === "assistant" && {
-      reasoning: msg.reasoning,
-      reasoningStartTime: msg.reasoningStartTime,
-      reasoningEndTime: msg.reasoningEndTime,
-      reasoningDuration: msg.reasoningDuration,
-      tool_calls: msg.tool_calls
-        ? JSON.parse(JSON.stringify(msg.tool_calls))
-        : [], // Ensure tool_calls are serializable
-      // New timing properties
-      apiCallTime: msg.apiCallTime,
-      firstTokenTime: msg.firstTokenTime,
-      completionTime: msg.completionTime,
-      // Token counting
-      tokenCount: msg.tokenCount,
-      // Annotations for reuse
-      annotations: msg.annotations ? JSON.parse(JSON.stringify(msg.annotations)) : null,
-      // Timeline parts for interleaved rendering
-      parts: msg.parts ? JSON.parse(JSON.stringify(msg.parts)) : null,
-    }),
-    // Add any other properties your message objects might have
-  }));
-
+  const rawMessages = plainMessages.map(serializeMessage);
   const title = data.title || "Untitled";
-  const branchPath = data.branchPath ?? []; // Preserve existing branch path
+  const branchPath = data.branchPath ?? [];
 
-  // Store full conversation
   await localforage.setItem(`conversation_${conversationId}`, {
     title,
     lastUpdated,
@@ -195,10 +153,7 @@ export async function storeMessages(
     branchPath,
   });
 
-  // Optionally update metadata. If you want to replace existing metadata,
-  // you can filter out the old entry before pushing the new one.
   const metadata = (await localforage.getItem("conversations_metadata")) || [];
-  // Remove any existing entry with the same id:
   const updatedMetadata = metadata.filter((m) => m.id !== conversationId);
   updatedMetadata.push({ id: conversationId, title, lastUpdated });
   await localforage.setItem("conversations_metadata", updatedMetadata);

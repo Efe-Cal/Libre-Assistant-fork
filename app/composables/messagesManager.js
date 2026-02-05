@@ -169,6 +169,8 @@ export function useMessagesManager(chatPanel) {
   function updateAssistantMessage(message, updates) {
     const index = messages.value.findIndex(m => m.id === message.id);
     if (index !== -1) {
+      // Update the local object too, to keep it in sync with the array
+      Object.assign(message, updates);
       // Use Vue's array mutation method to ensure reactivity
       messages.value.splice(index, 1, { ...messages.value[index], ...updates });
     }
@@ -314,8 +316,23 @@ export function useMessagesManager(chatPanel) {
         messages.value.splice(messages.value.length - 1, 1, updatedMsg);
       };
 
+      // RAF batching: schedule ONE UI update per frame instead of per chunk
+      let rafScheduled = false;
+      const scheduleUIUpdate = () => {
+        if (!rafScheduled) {
+          rafScheduled = true;
+          requestAnimationFrame(() => {
+            updateMessageReactivity();
+            if (chatPanel?.value?.isAtBottom) {
+              chatPanel.value.scrollToEnd("smooth");
+            }
+            rafScheduled = false;
+          });
+        }
+      };
+
       for await (const chunk of streamGenerator) {
-        // Process content
+        // Process content (fast accumulation, no Vue updates)
         if (chunk.content) {
           partsBuilder.appendContent(chunk.content);
           assistantMsg.content = (assistantMsg.content || '') + chunk.content;
@@ -382,20 +399,16 @@ export function useMessagesManager(chatPanel) {
           assistantMsg.errorDetails = chunk.errorDetails;
         }
 
-        // Update Vue reactivity
-        updateMessageReactivity();
-
-        // Allow Vue to render updates before scrolling
-        await new Promise(resolve => setTimeout(resolve, 0));
-
-        if (chatPanel?.value?.isAtBottom) {
-          chatPanel.value.scrollToEnd("smooth");
-        }
+        // Schedule batched UI update (will run once per frame, not per chunk)
+        scheduleUIUpdate();
       }
 
-      // Store final parts on assistantMsg for persistence
+      // Store final parts on assistantMsg for persistence (BEFORE final UI update)
       assistantMsg.parts = partsBuilder.toArray();
       assistantMsg.tool_calls = partsBuilder.getAllTools();
+
+      // Final flush after stream completes to ensure all content is rendered
+      updateMessageReactivity();
 
     } catch (error) {
       console.error('Error in stream processing:', error);
@@ -422,14 +435,22 @@ export function useMessagesManager(chatPanel) {
       if (partsBuilder.hasImagePart() && !partsBuilder.hasContentPart() && assistantMsg.content) {
         partsBuilder.ensureContentPartFirst(assistantMsg.content);
         assistantMsg.parts = partsBuilder.toArray();
+      } else {
+        // Final sync of parts to assistantMsg before completing
+        assistantMsg.parts = partsBuilder.toArray();
+        assistantMsg.tool_calls = partsBuilder.getAllTools();
       }
 
       // Mark message as complete and set completion time
-      updateAssistantMessage(assistantMsg, {
+      const finalUpdates = {
         complete: true,
         completionTime: new Date(),
         reasoningDuration: timing.calculateReasoningDuration()
-      });
+      };
+
+      // Update local object so RAF doesn't overwrite with stale 'complete: false'
+      Object.assign(assistantMsg, finalUpdates);
+      updateAssistantMessage(assistantMsg, finalUpdates);
 
       // Process any memory commands from the completed message content
       if (assistantMsg.content) {
@@ -477,11 +498,19 @@ export function useMessagesManager(chatPanel) {
       if (assistantMsg.error && assistantMsg.errorDetails) {
         const errorSuffix = `\n\n---\n⚠️ **Error:** ${assistantMsg.errorDetails.message}` +
           (assistantMsg.errorDetails.status ? ` (HTTP ${assistantMsg.errorDetails.status})` : '');
-        updateAssistantMessage(assistantMsg, {
-          content: (assistantMsg.content || '') + errorSuffix,
+
+        // IMPORTANT: Also update partsBuilder so the UI/parts array stays in sync with content string
+        partsBuilder.appendContent(errorSuffix);
+
+        const errorUpdates = {
+          content: assistantMsg.content + errorSuffix,
+          parts: partsBuilder.toArray(),
           error: true,
           errorDetails: assistantMsg.errorDetails
-        });
+        };
+
+        Object.assign(assistantMsg, errorUpdates);
+        updateAssistantMessage(assistantMsg, errorUpdates);
       }
 
       isLoading.value = false;

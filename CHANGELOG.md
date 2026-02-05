@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-02-05
+
+### Changed
+- **Breaking:** Removed default 4-iteration limit for tool calls (now unlimited). Set `tool_max_iterations` in settings to restore previous behavior
+- Rewrote streaming pipeline with requestAnimationFrame batching for ~60fps rendering and reduced latency
+- Enhanced health check endpoint to return quota/balance details for better error messaging
+- Extracted duplicate message serialization logic in conversation store
+
+### Added
+- 60-second stream timeout to detect stalled connections
+
+### Fixed
+- Fixed undeclared `hasPDFAttachments` variable causing potential reference errors
+- Fixed tool argument parsing to return errors to model instead of executing with empty args
+- Fixed API health check to properly display quota exhaustion messages
+
+
 ## [0.6.2] - 2026-01-27
 
 ### Fixed
