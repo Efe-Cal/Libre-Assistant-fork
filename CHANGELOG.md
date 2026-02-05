@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.7.0] - 2026-02-05
 
 ### Changed
-- **Breaking:** Removed default 4-iteration limit for tool calls (now unlimited). Set `tool_max_iterations` in settings to restore previous behavior
+- Removed default 4-iteration limit for tool calls (now unlimited). Set `tool_max_iterations` in settings to restore previous behavior
 - Rewrote streaming pipeline with requestAnimationFrame batching for ~60fps rendering and reduced latency
 - Enhanced health check endpoint to return quota/balance details for better error messaging
 - Extracted duplicate message serialization logic in conversation store
