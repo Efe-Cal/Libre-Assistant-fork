@@ -3,9 +3,9 @@ import markdownItFootnote from "markdown-it-footnote";
 import markdownItTaskLists from "markdown-it-task-lists";
 import markdownItTexmath from "markdown-it-texmath";
 import katex from "katex";
-import hljs from "highlight.js";
 
-// Shared fence renderer for code blocks
+// Shared fence renderer for code blocks (without synchronous highlighting)
+// Highlighting is now done lazily via lazyHighlight.js
 function addCodeBlockRenderer(md) {
   // Add custom fence rule for code blocks
   const defaultFence =
@@ -24,26 +24,16 @@ function addCodeBlockRenderer(md) {
     const lang = langName || "text";
     const langDisplay = lang;
 
-    let highlightedCode;
-    if (lang && hljs.getLanguage(lang)) {
-      try {
-        highlightedCode = hljs.highlight(code, {
-          language: lang,
-          ignoreIllegals: true,
-        }).value;
-      } catch (__) {
-        highlightedCode = md.utils.escapeHtml(code);
-      }
-    } else {
-      highlightedCode = md.utils.escapeHtml(code);
-    }
+    // Escape HTML in code content
+    const escapedCode = md.utils.escapeHtml(code);
 
     // Build HTML using template literals for better readability
     // For onclick handlers, we need to properly escape the language to prevent XSS and ensure proper execution
-    const escapedLang = langDisplay.replace(/'/g, "\\'").replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const escapedLang = langDisplay.replace(/'/g, "\\'").replace(/"/g, '"').replace(/</g, '<').replace(/>/g, '>');
     const safeLangClass = md.utils.escapeHtml(lang);
 
-    return `<div class="code-block-wrapper">
+    // Add data-needs-highlight attribute for lazy highlighting
+    return `<div class="code-block-wrapper" data-lang="${safeLangClass}">
   <div class="code-block-header">
     <span class="code-language">${langDisplay}</span>
     <div class="code-actions">
@@ -61,53 +51,74 @@ function addCodeBlockRenderer(md) {
       </button>
     </div>
   </div>
-  <pre><code class="hljs ${safeLangClass}">${highlightedCode}</code></pre>
+  <pre><code class="hljs ${safeLangClass}" data-needs-highlight="true">${escapedCode}</code></pre>
 </div>`;
   };
 }
 
+/**
+ * Factory function for creating configured markdown-it instances
+ * @param {Object} options - Configuration options
+ * @param {boolean} options.enableKatex - Enable KaTeX math rendering (default: true)
+ * @param {boolean} options.enableFootnotes - Enable footnotes (default: true)
+ * @param {boolean} options.enableTaskLists - Enable task lists (default: true)
+ * @returns {MarkdownIt} Configured markdown-it instance
+ */
+export function createMarkdownInstance(options = {}) {
+  const {
+    enableKatex = true,
+    enableFootnotes = true,
+    enableTaskLists = true,
+  } = options;
 
-// Create a shared markdown-it instance
-const createMarkdownInstance = () => {
   const md = new MarkdownIt({
     html: true,
     linkify: true,
     typographer: true,
-    highlight: function (str, lang) {
-      if (lang && hljs.getLanguage(lang)) {
-        try {
-          return hljs.highlight(str, { language: lang }).value;
-        } catch (__) {}
-      }
-      return "";
-    },
-  })
-    .use(markdownItFootnote)
-    .use(markdownItTaskLists, {
+    // Disable synchronous highlighting - we use lazy highlighting instead
+    highlight: null,
+  });
+
+  if (enableFootnotes) {
+    md.use(markdownItFootnote);
+  }
+
+  if (enableTaskLists) {
+    md.use(markdownItTaskLists, {
       enabled: false,
       label: true,
       bulletMarker: "-",
     });
+  }
 
+  if (enableKatex) {
+    md.use(markdownItTexmath, {
+      engine: katex,
+      delimiters: ["dollars", "brackets"],
+      katexOptions: {
+        throwOnError: false,
+        errorColor: "#888",
+        strict: "ignore",
+      },
+    });
+  }
+
+  addCodeBlockRenderer(md);
   return md;
-};
+}
 
-// Create instances for each component type
-const chatPanelMd = createMarkdownInstance();
-const streamingMessageMd = createMarkdownInstance();
-
-// Add shared code block renderer to both instances
-addCodeBlockRenderer(chatPanelMd);
-addCodeBlockRenderer(streamingMessageMd);
-
-// Add texmath only to chatPanel instance with support for both dollar signs and brackets
-chatPanelMd.use(markdownItTexmath, {
-  engine: katex,
-  delimiters: ["dollars", "brackets"],
-  katexOptions: {
-    throwOnError: false,
-    errorColor: " #cc0000",
-  },
+// Create a single unified instance for all rendering
+// This eliminates the "LaTeX jump" when streaming completes
+export const md = createMarkdownInstance({
+  enableKatex: true,
+  enableFootnotes: true,
+  enableTaskLists: true,
 });
 
-export { chatPanelMd, streamingMessageMd };
+// Backward-compatible exports
+// Both point to the same unified instance now
+export const chatPanelMd = md;
+export const streamingMessageMd = md;
+
+// Default export for convenience
+export default md;

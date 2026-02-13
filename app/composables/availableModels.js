@@ -148,13 +148,21 @@ export const availableModels = [
     logo: "/ai_logos/minimax.svg",
     models: [
       {
-        id: "minimax/minimax-m2.1",
-        name: "MiniMax M2.1",
+        id: "minimax/minimax-m2.5",
+        name: "MiniMax M2.5",
         description: "Frontier open-weights coding model",
         reasoning: false,
         extra_functions: [],
         extra_parameters: {}
-      }
+      },
+      {
+        id: "minimax/minimax-m2.1",
+        name: "MiniMax M2.1",
+        description: "High-quality open-weights coding model",
+        reasoning: false,
+        extra_functions: [],
+        extra_parameters: {}
+      },
     ],
   },
   {
@@ -247,9 +255,17 @@ export const availableModels = [
     logo: "/ai_logos/zai.svg",
     models: [
       {
+        id: "z-ai/glm-5",
+        name: "GLM 5",
+        description: "Frontier open-weight model excelling at coding and math",
+        reasoning: [true, false],
+        extra_functions: [],
+        extra_parameters: {}
+      },
+      {
         id: "z-ai/glm-4.7",
         name: "GLM 4.7",
-        description: "Frontier open-weight model excelling at coding and math",
+        description: "High-quality open-weight model excelling at coding and math",
         reasoning: [true, false],
         extra_functions: [],
         extra_parameters: {}

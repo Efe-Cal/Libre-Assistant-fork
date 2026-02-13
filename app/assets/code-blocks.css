@@ -218,12 +218,22 @@
   transition: all 0.3s cubic-bezier(.4, 1, .6, 1);
 }
 
-.markdown-content>*:first-child {
-  margin-top: 0;
+/* Remove top margin from the first visible element */
+.markdown-content>*:first-child,
+.markdown-content>.first-block {
+  margin-top: 0 !important;
 }
 
-.markdown-content>*:last-child {
-  margin-bottom: 0;
+/* Remove bottom margin from the last visible element */
+.markdown-content>*:last-child,
+.markdown-content>.last-block {
+  margin-bottom: 0 !important;
+}
+
+/* Consistent base margins for all direct children */
+.markdown-content>* {
+  margin-top: 0.8em;
+  margin-bottom: 0.8em;
 }
 
 /* Headings */

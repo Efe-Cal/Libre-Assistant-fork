@@ -1,15 +1,13 @@
 <script setup>
 import { onMounted, onUnmounted, ref, watch, nextTick, computed, reactive } from "vue";
 import { Icon } from "@iconify/vue";
-import { chatPanelMd as md } from '../utils/markdown';
+import { md } from '../utils/markdown';
 import { copyCode, downloadCode } from '../utils/codeBlockUtils';
 import StreamingMessage from './StreamingMessage.vue';
 import ChatWidget from './ChatWidget.vue';
 import LoadingSpinner from './LoadingSpinner.vue';
 import { getFormattedStatsFromExecutedTools } from '../composables/searchViewStats';
-
-// Initialize markdown-it with plugins (without markdown-it-katex)
-// Using shared instance from utils/markdown.js
+import { highlightAllBlocks } from '../utils/lazyHighlight';
 
 const props = defineProps({
   currConvo: {
@@ -102,6 +100,9 @@ const liveReasoningTimers = reactive({});
 const timerIntervals = {};
 const messageLoadingStates = reactive({});
 
+// Phase 2.2: Message stats cache
+const messageStatsCache = reactive({});
+
 function formatDuration(ms) {
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
@@ -110,14 +111,63 @@ function formatDuration(ms) {
 const isAtBottom = ref(true);
 const chatWrapper = ref(null);
 
-const messages = computed(() => {
+// Phase 2.2: Cached scroll container reference (found once on mount)
+let cachedScrollContainer = null;
+
+// Phase 3.2: Normalized messages with auto-migration for legacy messages
+const normalizedMessages = computed(() => {
   if (!props.currMessages) return [];
-  return props.currMessages;
+
+  return props.currMessages.map(msg => {
+    // Auto-migrate legacy assistant messages without parts
+    if (msg.role === 'assistant' && (!msg.parts || msg.parts.length === 0)) {
+      const parts = [];
+
+      // Add reasoning part if present
+      if (msg.reasoning) {
+        parts.push({
+          type: 'reasoning',
+          content: msg.reasoning
+        });
+      }
+
+      // Add tool_calls as tool_group part if present
+      if (msg.tool_calls && msg.tool_calls.length > 0) {
+        parts.push({
+          type: 'tool_group',
+          tools: msg.tool_calls
+        });
+      }
+
+      // Add content part
+      parts.push({
+        type: 'content',
+        content: msg.content || ''
+      });
+
+      return {
+        ...msg,
+        parts
+      };
+    }
+    return msg;
+  });
 });
 
-// Function to get formatted message stats
+// Keep messages as alias for normalizedMessages for compatibility
+const messages = normalizedMessages;
+
+// Phase 2.2: Cached message stats with caching for complete messages
 function getMessageStats(message) {
   if (message.role !== 'assistant') return [];
+
+  // Use cache key based on message id and complete status
+  const cacheKey = `${message.id}-${message.complete}`;
+
+  // Return cached value if available for complete messages
+  if (message.complete && messageStatsCache[cacheKey]) {
+    return messageStatsCache[cacheKey];
+  }
 
   const stats = calculateMessageStats(message);
   const formattedStats = [];
@@ -150,73 +200,51 @@ function getMessageStats(message) {
     });
   }
 
+  // Cache if message is complete
+  if (message.complete) {
+    messageStatsCache[cacheKey] = formattedStats;
+  }
+
   return formattedStats;
 }
 
-const scrollToEnd = (behavior = "instant") => {
-  // With the new layout, scrolling happens at the parent chat-column level
-  // Need to find the correct scroll container by looking for overflow-y: auto
-  let currentElement = chatWrapper.value?.parentElement;
-
-  // Traverse up the DOM to find the actual scroll container
-  while (currentElement && currentElement !== document.body) {
-    const computedStyle = window.getComputedStyle(currentElement);
-    if (computedStyle.overflowY === 'auto' || computedStyle.overflowY === 'scroll') {
-      // Found the scroll container
-      currentElement.scrollTo({
-        top: currentElement.scrollHeight,
-        behavior,
-      });
-      return;
-    }
-    currentElement = currentElement.parentElement;
+// Find the scroll container by traversing up the DOM tree
+// Used once on mount and cached for all subsequent scroll operations
+function findScrollContainer() {
+  // First, try to find container with class 'chat-section'
+  let el = chatWrapper.value?.parentElement;
+  if (el) {
+    el = el.parentElement;
+    if (el?.classList.contains('chat-section')) return el;
   }
 
-  // Fallback to local scroll if no scroll container found
-  if (chatWrapper.value) {
-    chatWrapper.value.scrollTo({
-      top: chatWrapper.value.scrollHeight,
-      behavior,
-    });
+  // Fallback: find by overflow style
+  el = chatWrapper.value?.parentElement?.parentElement;
+  let level = 0;
+  while (el && el !== document.body && level < 10) {
+    const style = getComputedStyle(el);
+    if (style.overflowY === 'auto' || style.overflowY === 'scroll') return el;
+    el = el.parentElement;
+    level++;
+  }
+
+  return null;
+}
+
+const scrollToEnd = (behavior = "instant") => {
+  const container = cachedScrollContainer || chatWrapper.value;
+  if (container) {
+    container.scrollTo({ top: container.scrollHeight, behavior });
   }
 };
 
 const handleScroll = () => {
-  // With new layout structure, the main scrolling container could be higher up
-  let currentElement = chatWrapper.value?.parentElement;
+  const container = cachedScrollContainer || chatWrapper.value;
+  if (!container) return;
 
-  // Traverse up the DOM to find the actual scroll container
-  while (currentElement && currentElement !== document.body) {
-    const computedStyle = window.getComputedStyle(currentElement);
-    if (computedStyle.overflowY === 'auto' || computedStyle.overflowY === 'scroll') {
-      // Found the scroll container, use its state
-      const atBottom = Math.abs(
-        currentElement.scrollHeight -
-        currentElement.scrollTop -
-        currentElement.clientHeight
-      ) < 10;
-
-      isAtBottom.value = atBottom;
-
-      const isAtTop = currentElement.scrollTop === 0;
-      emit('scroll', { isAtTop });
-      return; // Exit after handling the correct container
-    }
-    currentElement = currentElement.parentElement;
-  }
-
-  // Fallback for local scroll if no scroll container found
-  if (chatWrapper.value) {
-    const atBottom = Math.abs(
-      chatWrapper.value.scrollHeight -
-      chatWrapper.value.scrollTop -
-      chatWrapper.value.clientHeight
-    ) < 10;
-    isAtBottom.value = atBottom;
-
-    const isAtTop = chatWrapper.value.scrollTop === 0;
-    emit('scroll', { isAtTop });
-  }
+  const { scrollHeight, scrollTop, clientHeight } = container;
+  isAtBottom.value = Math.abs(scrollHeight - scrollTop - clientHeight) < 10;
+  emit('scroll', { isAtTop: scrollTop === 0 });
 };
 
 watch(
@@ -309,66 +337,17 @@ watch(
   }
 );
 
-let mainScrollContainer = null;
-let scrollListener = null;
-let attachedToDocument = false; // Track if we attached to document
-let attachedToWindow = false;   // Track if we attached to window
-
 onMounted(() => {
   nextTick(() => scrollToEnd("instant"));
 
-  // Find the main scroll container and attach a scroll listener
-  // According to your feedback, the actual scrolling container has class 'chat-section'
-  // which should be the parent of the 'chat-column' that is the parent of chatWrapper
-  let currentElement = chatWrapper.value?.parentElement; // This is 'chat-column'
-  if (currentElement) {
-    currentElement = currentElement.parentElement; // This should be 'chat-section'
-  }
+  // Find and cache the scroll container once
+  cachedScrollContainer = findScrollContainer();
 
-  if (currentElement && currentElement.classList.contains('chat-section')) {
-    mainScrollContainer = currentElement;
-    scrollListener = () => {
-      handleScroll();
-    };
-    mainScrollContainer.addEventListener('scroll', scrollListener, { passive: true });
-    // Trigger initial scroll check
-    handleScroll();
-    attachedToDocument = false; // Not attached to document
-    attachedToWindow = false; // Not attached to window
-  } else {
-    // Fallback: find by overflow style, starting from the chat-column
-    let searchElement = chatWrapper.value?.parentElement?.parentElement; // Start from chat-section level
-    let level = 0;
-    let foundScrollContainer = false;
+  const scrollTarget = cachedScrollContainer || document;
+  scrollTarget.addEventListener('scroll', handleScroll, { passive: true });
 
-    while (searchElement && searchElement !== document.body && level < 10) {
-      const computedStyle = window.getComputedStyle(searchElement);
-
-      if (computedStyle.overflowY === 'auto' || computedStyle.overflowY === 'scroll') {
-        mainScrollContainer = searchElement;
-        scrollListener = () => {
-          handleScroll();
-        };
-        mainScrollContainer.addEventListener('scroll', scrollListener, { passive: true });
-        // Trigger initial scroll check
-        handleScroll();
-        attachedToDocument = false; // Not attached to document
-        attachedToWindow = false; // Not attached to window
-        foundScrollContainer = true;
-        break;
-      }
-      searchElement = searchElement.parentElement;
-      level++;
-    }
-
-    if (!foundScrollContainer) {
-      // Last resort: listen to document scroll
-      scrollListener = () => handleScroll();
-      document.addEventListener('scroll', scrollListener, { passive: true });
-      attachedToDocument = true; // Mark that we attached to document
-      attachedToWindow = false; // Not attached to window
-    }
-  }
+  // Trigger initial scroll check
+  handleScroll();
 
   // Make functions available globally (only in browser)
   if (typeof window !== 'undefined') {
@@ -378,14 +357,9 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
-  // Clean up scroll listener based on where it was attached
-  if (mainScrollContainer && scrollListener && !attachedToDocument && !attachedToWindow) {
-    mainScrollContainer.removeEventListener('scroll', scrollListener);
-  } else if (attachedToDocument && scrollListener) {
-    document.removeEventListener('scroll', scrollListener);
-  } else if (attachedToWindow && scrollListener) {
-    window.removeEventListener('scroll', scrollListener);
-  }
+  // Clean up scroll listener from cached container or document fallback
+  const scrollTarget = cachedScrollContainer || document;
+  scrollTarget.removeEventListener('scroll', handleScroll);
 
   // Clean up all timers
   Object.values(timerIntervals).forEach(timer => {
@@ -393,19 +367,18 @@ onUnmounted(() => {
   });
 });
 
-// Render message content with markdown
-function renderMessageContent(content, executedTools) {
-  // Render Markdown
-  return md.render(content || '');
-}
+// Render message content with markdown and trigger lazy highlighting
+function renderMessageContent(content) {
+  const html = md.render(content || '');
 
+  // Schedule lazy highlighting for any code blocks in the rendered HTML
+  nextTick(() => {
+    if (chatWrapper.value) {
+      highlightAllBlocks(chatWrapper.value);
+    }
+  });
 
-
-
-
-// Function to handle when streaming message starts
-function onStreamingMessageStart(messageId) {
-  // We don't need to change the loading state here since it's already handled by the watcher
+  return html;
 }
 
 // Function to handle when a streaming message is complete
@@ -424,19 +397,6 @@ function getFormattedStatsForDisplay(messageId) {
   }
 
   return getFormattedStatsFromExecutedTools(message.executed_tools || []);
-}
-
-// Function to check if message has memory tool calls
-function hasMemoryToolCalls(message) {
-  if (!message.tool_calls || !Array.isArray(message.tool_calls)) {
-    return false;
-  }
-
-  // Check if any of the tool calls are memory-related
-  return message.tool_calls.some(toolCall => {
-    const functionName = toolCall.function?.name;
-    return functionName === 'addMemory' || functionName === 'modifyMemory' || functionName === 'deleteMemory';
-  });
 }
 
 // Function to copy message content
@@ -652,13 +612,12 @@ defineExpose({ scrollToEnd, isAtBottom, chatWrapper });
                       >
                          <div v-if="message.complete || groupIndex < getPartGroups(message.parts).length - 1"
                               class="markdown-content"
-                              v-html="renderMessageContent(group.parts[0].content, [])"></div>
+                              v-html="renderMessageContent(group.parts[0].content)"></div>
                          <div v-else>
                             <StreamingMessage
                               :content="group.parts[0].content"
                               :is-complete="message.complete && groupIndex === getPartGroups(message.parts).length - 1"
                               @complete="onStreamingMessageComplete(message.id)"
-                              @start="onStreamingMessageStart(message.id)"
                             />
                          </div>
                       </div>
@@ -692,82 +651,45 @@ defineExpose({ scrollToEnd, isAtBottom, chatWrapper });
                     </template>
                   </div>
 
-                  <!-- Legacy Rendering (Fallback) -->
-                  <div v-else>
-                      <!-- Tool Widgets (Legacy) -->
-                      <div v-if="message.role === 'assistant' && message.tool_calls && message.tool_calls.length > 0" class="tool-widgets-container">
-                        <ChatWidget
-                          v-for="(tool, index) in message.tool_calls"
-                          :key="index"
-                          type="tool"
-                          :tool-call="tool"
-                          :result="null"
-                        />
-                      </div>
-                      
-                      <!-- Reasoning Card (Legacy) -->
-                      <div v-if="message.role === 'assistant' && message.reasoning" class="reasoning-card">
-                        <ChatWidget
-                          type="reasoning"
-                          :content="message.reasoning"
-                          :status="liveReasoningTimers[message.id] || (message.reasoningDuration > 0 ? `Thought for ${formatDuration(message.reasoningDuration)}` : message.reasoningStartTime ? 'Thinking...' : 'Reasoning Process')"
-                        />
-                      </div>
-
-                      <!-- Display notification if message has memory tool calls (Legacy style) -->
-                      <div v-if="hasMemoryToolCalls(message)" class="memory-adjustment-notification">
-                        Adjusted saved memories
-                      </div>
-
-                      <div class="bubble">
-                        <div v-if="message.role == 'user'" class="user-message-content">
-                          <!-- Display attached files -->
-                          <div v-if="message.attachments?.length" class="message-attachments">
-                            <div 
-                              v-for="attachment in message.attachments" 
-                              :key="attachment.id"
-                              class="attachment-thumbnail"
-                              :class="attachment.type"
-                            >
-                              <img 
-                                v-if="attachment.type === 'image'"
-                                :src="attachment.dataUrl" 
-                                :alt="attachment.filename"
-                                loading="lazy"
-                              />
-                              <div v-else class="pdf-attachment">
-                                <Icon icon="material-symbols:picture-as-pdf" width="24" height="24" />
-                                <span class="pdf-filename">{{ attachment.filename }}</span>
-                              </div>
-                            </div>
-                          </div>
-                          <!-- Message text -->
-                          <div v-if="editingMessageId !== message.id" class="user-text">{{ message.content }}</div>
-                          <div v-else class="edit-area">
-                            <textarea 
-                              v-model="editContent" 
-                              class="edit-textarea" 
-                              ref="editTextarea"
-                              @keydown.enter.exact.prevent="submitEdit(message.id)"
-                              @keydown.esc="cancelEditing"
-                            ></textarea>
-                            <div class="edit-actions">
-                              <button class="edit-cancel" @click="cancelEditing">Cancel</button>
-                              <button class="edit-save" @click="submitEdit(message.id)">Save & Submit</button>
-                            </div>
+                  <!-- User messages without parts (not applicable for assistant due to auto-migration) -->
+                  <div v-else-if="message.role === 'user'" class="bubble">
+                    <div class="user-message-content">
+                      <!-- Display attached files -->
+                      <div v-if="message.attachments?.length" class="message-attachments">
+                        <div
+                          v-for="attachment in message.attachments"
+                          :key="attachment.id"
+                          class="attachment-thumbnail"
+                          :class="attachment.type"
+                        >
+                          <img
+                            v-if="attachment.type === 'image'"
+                            :src="attachment.dataUrl"
+                            :alt="attachment.filename"
+                            loading="lazy"
+                          />
+                          <div v-else class="pdf-attachment">
+                            <Icon icon="material-symbols:picture-as-pdf" width="24" height="24" />
+                            <span class="pdf-filename">{{ attachment.filename }}</span>
                           </div>
                         </div>
-                        <div v-else-if="message.complete" class="markdown-content"
-                          v-html="renderMessageContent(message.content, message.executed_tools || [])"></div>
-                        <div v-else>
-                          <div v-if="messageLoadingStates[message.id]" class="loading-animation">
-                            <LoadingSpinner />
-                          </div>
-                          <StreamingMessage :content="message.content" :is-complete="message.complete"
-                            :executed-tools="message.executed_tools || []" @complete="onStreamingMessageComplete(message.id)"
-                            @start="onStreamingMessageStart(message.id)" />
+                      </div>
+                      <!-- Message text -->
+                      <div v-if="editingMessageId !== message.id" class="user-text">{{ message.content }}</div>
+                      <div v-else class="edit-area">
+                        <textarea
+                          v-model="editContent"
+                          class="edit-textarea"
+                          ref="editTextarea"
+                          @keydown.enter.exact.prevent="submitEdit(message.id)"
+                          @keydown.esc="cancelEditing"
+                        ></textarea>
+                        <div class="edit-actions">
+                          <button class="edit-cancel" @click="cancelEditing">Cancel</button>
+                          <button class="edit-save" @click="submitEdit(message.id)">Save & Submit</button>
                         </div>
                       </div>
+                    </div>
                   </div>
               <div class="message-content-footer" :class="{ 'user-footer': message.role === 'user' }">
                 <div class="footer-left-actions">
@@ -804,12 +726,14 @@ defineExpose({ scrollToEnd, isAtBottom, chatWrapper });
                   </button>
                 </div>
 
-                <div v-if="message.role === 'assistant'" class="message-stats-row">
-                  <span v-for="(stat, index) in getMessageStats(message)" :key="index" class="stat-item">
-                    <span v-if="stat.value" class="stat-value">{{ stat.value }}</span>
-                    <span v-if="stat.value && index < getMessageStats(message).length - 1" class="stat-separator"> • </span>
-                  </span>
-                </div>
+                <template v-if="message.role === 'assistant'">
+                  <div class="message-stats-row" v-for="(stats, _) in [getMessageStats(message)]" :key="_">
+                    <span v-for="(stat, index) in stats" :key="index" class="stat-item">
+                      <span v-if="stat.value" class="stat-value">{{ stat.value }}</span>
+                      <span v-if="stat.value && index < stats.length - 1" class="stat-separator"> • </span>
+                    </span>
+                  </div>
+                </template>
               </div>
             </div>
           </div>

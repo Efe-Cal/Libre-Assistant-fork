@@ -1,236 +1,297 @@
 <template>
   <div class="markdown-content streaming-message-wrapper">
-    <!-- Static container for completed elements - uses display:contents so children appear as direct children of wrapper -->
+    <!-- Static content (already complete blocks, append-only) -->
     <div ref="staticContainer" class="streaming-content-container"></div>
 
-    <!-- Streaming container for current element being rendered -->
-    <div ref="streamingContainer" class="streaming-content-container"></div>
+    <!-- Streaming content (current block being typed, driven by reactive ref) -->
+    <div ref="streamingContainer" class="streaming-content-container" v-html="streamingHtml"></div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, onBeforeUnmount, nextTick } from 'vue';
-import { streamingMessageMd as md } from '../utils/markdown';
+import { ref, watch, nextTick } from 'vue';
+import { md } from '../utils/markdown';
 import { copyCode, downloadCode } from '../utils/codeBlockUtils';
-import hljs from 'highlight.js';
+import { highlightAllBlocks } from '../utils/lazyHighlight';
 
-// props
+// Props
 const props = defineProps({
   content: { type: String, default: '' },
-  isComplete: { type: Boolean, default: false },
-  executedTools: { type: Array, default: () => [] }
+  isComplete: { type: Boolean, default: false }
 });
 
 const emit = defineEmits(['complete', 'start']);
 
-// DOM refs (match your template)
+// DOM refs
 const staticContainer = ref(null);
 const streamingContainer = ref(null);
 
-
-// markdown-it instance + plugins with highlighting
-// Using shared instance from utils/markdown.js
+// Reactive HTML for the streaming container (Phase 3.1: Vue-idiomatic)
+const streamingHtml = ref('');
 
 // Internal state
-let appendedBlockCount = 0;   // how many complete blocks we've appended to static container
-let tailMarkdown = '';        // the current tail (not-yet-moved text)
-let prevContent = '';         // last seen prop content string
-let lastRenderKey = '';       // avoid redundant streaming innerHTML writes
-let hasEmittedStart = false;  // track if we've emitted the start event
+let staticBlockCount = 0;
+let tailMarkdown = '';
+let prevContent = '';
+let lastRenderKey = '';
+let hasEmittedStart = false;
+let lastCompleteBlockCount = 0;
 
 // Make sure global functions are available
-window.copyCode = copyCode;
-window.downloadCode = downloadCode;
+if (typeof window !== 'undefined') {
+  window.copyCode = copyCode;
+  window.downloadCode = downloadCode;
+}
 
-// --- Utilities ---
+// --- Block Splitting ---
 
-// Simple block split on blank lines (original approach)
+/**
+ * Smart block splitting that respects fenced code blocks.
+ * Prevents code blocks with blank lines from being prematurely split.
+ */
 function splitIntoBlocks(markdown) {
   if (!markdown) return [''];
-  return markdown.split(/\n{2,}/).map(s => s === undefined ? '' : s);
+
+  const lines = markdown.split('\n');
+  const blocks = [];
+  let currentBlock = [];
+  let inCodeFence = false;
+  let fenceChar = '';
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Check for fence start/end (``` or ~~~)
+    const fenceMatch = trimmed.match(/^(```|~~~)/);
+    if (fenceMatch) {
+      if (!inCodeFence) {
+        // Starting a code fence — finalize any current block first
+        if (currentBlock.length > 0) {
+          blocks.push(currentBlock.join('\n'));
+          currentBlock = [];
+        }
+        inCodeFence = true;
+        fenceChar = fenceMatch[1];
+        currentBlock.push(line);
+      } else if (trimmed.startsWith(fenceChar)) {
+        // Ending a code fence
+        currentBlock.push(line);
+        blocks.push(currentBlock.join('\n'));
+        currentBlock = [];
+        inCodeFence = false;
+        fenceChar = '';
+      } else {
+        currentBlock.push(line);
+      }
+    } else if (inCodeFence) {
+      currentBlock.push(line);
+    } else if (trimmed === '' && currentBlock.length > 0) {
+      // Blank line outside code fence — potential block boundary
+      const nextNonBlankIndex = lines.findIndex((l, idx) => idx > i && l.trim() !== '');
+      const nextLine = nextNonBlankIndex !== -1 ? lines[nextNonBlankIndex] : null;
+
+      // Patterns that typically start new blocks
+      const blockStarters = /^#{1,6}\s|^>|^[-*+]\s|^\d+\.\s|^```|^~~~|^\|/;
+
+      if (!nextLine || blockStarters.test(nextLine)) {
+        blocks.push(currentBlock.join('\n'));
+        currentBlock = [];
+      } else {
+        currentBlock.push(line);
+      }
+    } else {
+      currentBlock.push(line);
+    }
+  }
+
+  if (currentBlock.length > 0) {
+    blocks.push(currentBlock.join('\n'));
+  }
+
+  return blocks.length ? blocks : [''];
 }
 
-// Render block to HTML
+// Render a block of markdown to HTML
 function renderBlockHtml(mdText) {
   if (!mdText || mdText.trim().length === 0) return '';
-
-  // Render markdown normally during streaming
-  const html = md.render(mdText || '');
-
-  // Create a temporary div to hold the HTML
-  const tempDiv = document.createElement('div');
-  tempDiv.innerHTML = html;
-
-  // Return the processed HTML
-  return tempDiv.innerHTML;
+  return md.render(mdText);
 }
 
-// Append DOM element directly to static container
-function appendElementToStatic() {
-  if (!staticContainer.value || !streamingContainer.value) {
-    return;
-  }
+// --- Spacing Stability ---
 
-  // Move all children from streaming container to static container
+/**
+ * Apply explicit margin classes to children.
+ * Prevents margin flicker when :first-child/:last-child selectors shift
+ * due to DOM node movement between containers.
+ */
+function applyMarginClasses(container) {
+  if (!container) return;
+  const children = container.children;
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    child.classList.remove('first-block', 'last-block');
+    if (i === 0) child.classList.add('first-block');
+    if (i === children.length - 1) child.classList.add('last-block');
+  }
+}
+
+// Move all DOM children from streaming to static container (append-only)
+function flushToStatic() {
+  if (!staticContainer.value || !streamingContainer.value) return;
+
   while (streamingContainer.value.firstChild) {
     staticContainer.value.appendChild(streamingContainer.value.firstChild);
+    staticBlockCount++;
   }
+
+  nextTick(() => applyMarginClasses(staticContainer.value));
 }
 
-// Replace streaming container content (avoid churn when identical)
+// Update the streaming reactive HTML (avoids redundant writes)
 function setStreamingHtml(html) {
-  if (!streamingContainer.value) return;
-  if (lastRenderKey === html) {
-    return;
-  }
+  if (lastRenderKey === html) return;
   lastRenderKey = html;
+  streamingHtml.value = html || '';
 
-  // Set the streaming container with the HTML
-  streamingContainer.value.innerHTML = html || '';
+  nextTick(() => applyMarginClasses(streamingContainer.value));
 }
 
-// Flush entire message into static container (used on complete)
+// Finalize: render full content into static container
 function finalizeAll(fullText) {
   if (!staticContainer.value) return;
 
-  // Clear containers to prevent duplication
+  // Clear everything
   staticContainer.value.innerHTML = '';
-  if (streamingContainer.value) {
-    streamingContainer.value.innerHTML = '';
-  }
+  staticBlockCount = 0;
 
-  // Render the full content
+  // Render full content via reactive binding, then flush to static
   const fullHtml = md.render(fullText || '');
-
-  // Set the streaming container with the full HTML
   setStreamingHtml(fullHtml);
-  appendElementToStatic();
 
-  tailMarkdown = '';
-  appendedBlockCount = 0;
-  lastRenderKey = '';
-  prevContent = fullText || '';
+  // After Vue renders the streaming container, move nodes to static
+  nextTick(() => {
+    flushToStatic();
+
+    // Reset state
+    tailMarkdown = '';
+    staticBlockCount = 0;
+    lastCompleteBlockCount = 0;
+    lastRenderKey = '';
+    prevContent = fullText || '';
+    streamingHtml.value = '';
+
+    // Trigger immediate highlighting on completion
+    nextTick(() => {
+      if (staticContainer.value) {
+        highlightAllBlocks(staticContainer.value);
+      }
+    });
+  });
 }
 
-// Process appended suffix only (keeps streaming live)
+// --- Incremental Rendering ---
+
+/**
+ * Process appended suffix incrementally.
+ * Only re-renders the current streaming block, not all accumulated blocks.
+ */
 function processAppendedSuffix(suffix) {
   if (!suffix || suffix.length === 0) {
-    // no-op but still keep streaming block rendered
     const blocks = splitIntoBlocks(tailMarkdown);
     const streamingBlock = blocks.length ? blocks[blocks.length - 1] : '';
     setStreamingHtml(renderBlockHtml(streamingBlock));
     return;
   }
 
-  // Append suffix to tail buffer
-  const previousTail = tailMarkdown;
   tailMarkdown = tailMarkdown ? (tailMarkdown + suffix) : suffix;
 
-  // Split blocks in tail; any block except last is "complete"
   const blocks = splitIntoBlocks(tailMarkdown);
-  const completeBlocks = blocks.length > 1 ? blocks.slice(0, blocks.length - 1) : [];
+  const completeBlocks = blocks.length > 1 ? blocks.slice(0, -1) : [];
+  const streamingBlock = blocks.length ? blocks[blocks.length - 1] : '';
 
-  // Only append complete blocks that are actually new
-  // Compare with what we had before to avoid duplication
-  const previousBlocks = splitIntoBlocks(previousTail);
-  const previousCompleteCount = previousBlocks.length > 1 ? previousBlocks.length - 1 : 0;
+  // Only process newly-complete blocks
+  if (completeBlocks.length > lastCompleteBlockCount) {
+    const newBlocks = completeBlocks.slice(lastCompleteBlockCount);
 
-  // Append any newly-complete blocks (only the actually new ones)
-  if (completeBlocks.length > previousCompleteCount) {
-    // Accumulate all newly-complete blocks in the streaming container
     let accumulatedHtml = '';
-    for (let i = previousCompleteCount; i < completeBlocks.length; i++) {
-      const html = renderBlockHtml(completeBlocks[i]);
-      if (html) {
-        accumulatedHtml += html;
-      }
+    for (const block of newBlocks) {
+      const html = renderBlockHtml(block);
+      if (html) accumulatedHtml += html;
     }
 
-    // Set the streaming container with all accumulated HTML and then move it to static container
     if (accumulatedHtml) {
       setStreamingHtml(accumulatedHtml);
-      appendElementToStatic();
+      // Wait for Vue to render, then flush to static
+      nextTick(() => flushToStatic());
     }
 
-    appendedBlockCount = completeBlocks.length;
+    lastCompleteBlockCount = completeBlocks.length;
   }
 
-  // streaming block is last block in tail (or empty)
-  const streamingBlock = blocks.length ? blocks[blocks.length - 1] : '';
-  const streamingHtml = renderBlockHtml(streamingBlock);
-  setStreamingHtml(streamingHtml);
+  // Always update the streaming block
+  setStreamingHtml(renderBlockHtml(streamingBlock));
 }
 
-// Fallback when new content is not a simple append (replace/rewind)
+// Handle non-prefix (rewind/replace) content changes
 function handleNonPrefixReplace(newContent, isComplete) {
   if (isComplete) {
     finalizeAll(newContent);
-    prevContent = newContent || '';
     return;
   }
 
-  // Non-prefix change: conservative reset & re-render
+  // Conservative reset
   if (staticContainer.value) staticContainer.value.innerHTML = '';
-  appendedBlockCount = 0;
+  staticBlockCount = 0;
+  lastCompleteBlockCount = 0;
   tailMarkdown = '';
-  lastRenderKey = '';  // Reset lastRenderKey as well
-  prevContent = '';    // Reset prevContent to avoid confusion
+  lastRenderKey = '';
+  prevContent = '';
 
   const blocks = splitIntoBlocks(newContent || '');
-  const completeBlocks = blocks.length > 1 ? blocks.slice(0, blocks.length - 1) : [];
+  const completeBlocks = blocks.length > 1 ? blocks.slice(0, -1) : [];
 
-  // Accumulate all complete blocks
   let accumulatedHtml = '';
-  for (let i = 0; i < completeBlocks.length; i++) {
-    const html = renderBlockHtml(completeBlocks[i]);
-    if (html) {
-      accumulatedHtml += html;
-    }
-    appendedBlockCount++;
+  for (const block of completeBlocks) {
+    const html = renderBlockHtml(block);
+    if (html) accumulatedHtml += html;
   }
 
-  // Set the streaming container with all accumulated HTML and then move it to static container
   if (accumulatedHtml) {
     setStreamingHtml(accumulatedHtml);
-    appendElementToStatic();
+    nextTick(() => flushToStatic());
   }
+
+  lastCompleteBlockCount = completeBlocks.length;
   tailMarkdown = blocks.length ? blocks[blocks.length - 1] : '';
   setStreamingHtml(renderBlockHtml(tailMarkdown));
 
-  // Update prevContent to current content
   prevContent = newContent || '';
 }
 
-// Main logic executed immediately on prop change (no debounce)
+// Main processing function — called on every prop change
 function processContentNow(newContent, isComplete) {
   newContent = newContent || '';
 
-  // If there was no previous content, treat as fresh and reset message instance
+  // Fresh content — handle as initial render
   if (!prevContent) {
-    // Emit start event when streaming begins
     if (!hasEmittedStart) {
       emit('start');
       hasEmittedStart = true;
     }
-
-    // Init: split into blocks and render
     handleNonPrefixReplace(newContent, false);
     prevContent = newContent;
     return;
   }
 
-  // If marked complete, finalize entire content
+  // Complete — finalize
   if (isComplete) {
     finalizeAll(newContent);
-    prevContent = newContent;
-
-    // Emit event to notify parent that message is complete
     emit('complete');
-
     return;
   }
 
-  // Fast check: is this an append (prevContent is prefix of newContent)?
+  // Fast path: simple append
   if (newContent.startsWith(prevContent)) {
     const suffix = newContent.slice(prevContent.length);
     processAppendedSuffix(suffix);
@@ -238,37 +299,28 @@ function processContentNow(newContent, isComplete) {
     return;
   }
 
-  // Check if this is actually a rewind/replacement case
-  // Only do full replacement if content is significantly different
-  if (!newContent.startsWith(prevContent.substring(0, Math.min(prevContent.length, newContent.length)))) {
-    // Otherwise, fallback to conservative replace handling
+  // Rewind / replacement fallback
+  const minLength = Math.min(prevContent.length, newContent.length);
+  if (minLength === 0 || !newContent.startsWith(prevContent.substring(0, minLength))) {
     handleNonPrefixReplace(newContent, isComplete);
     return;
   }
 
-  // For minor changes that aren't simple appends, still treat as append with empty suffix
-  // This handles cases where whitespace or formatting might have changed
   processAppendedSuffix('');
   prevContent = newContent;
 }
 
-// Watch props and run immediately (no debounce)
+// Watch props and process immediately
 watch(
   () => [props.content, props.isComplete],
   ([newContent, isComplete]) => {
-    // Reset the start flag when content is cleared or reset
     if (!newContent || newContent.length < prevContent.length) {
       hasEmittedStart = false;
     }
-
     processContentNow(newContent || '', isComplete);
   },
   { immediate: true }
 );
-
-onBeforeUnmount(() => {
-  // nothing to clean up here
-});
 </script>
 
 <style>
@@ -276,14 +328,12 @@ onBeforeUnmount(() => {
   padding: 0;
 }
 
-/* 
- * Use display:contents so children of these containers appear as direct children 
+/*
+ * Use display:contents so children of these containers appear as direct children
  * of the .markdown-content wrapper for CSS selector purposes.
  * This makes :first-child/:last-child rules work across both containers.
  */
 .streaming-content-container {
   display: contents;
 }
-
-/* Note: .markdown-content styles are in code-blocks.css */
 </style>

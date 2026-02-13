@@ -96,7 +96,7 @@
 <script setup>
 import { ref, computed } from 'vue';
 import { Icon } from "@iconify/vue";
-import { chatPanelMd as md } from '../utils/markdown';
+import { md } from '../utils/markdown';
 
 const props = defineProps({
   // Widget type: 'reasoning' or 'tool'
@@ -158,23 +158,24 @@ const isSearch = computed(() => {
 const isMemory = computed(() => {
   if (props.type === 'reasoning') return false;
   const memoryTools = ['addMemory', 'modifyMemory', 'deleteMemory'];
-  
+
   if (props.toolCall) {
     return memoryTools.includes(props.toolCall?.function?.name);
   }
-  
+
   if (props.toolCalls && props.toolCalls.length > 0) {
     return memoryTools.includes(props.toolCalls[0]?.function?.name);
   }
-  
+
   return false;
 });
 
+// Phase 2.2: Use cached parsed args
 const args = computed(() => {
-  if (props.toolCall) {
+  if (props.toolCall?.function?.arguments) {
     try {
-      return JSON.parse(props.toolCall?.function?.arguments || '{}');
-    } catch (e) {
+      return JSON.parse(props.toolCall.function.arguments);
+    } catch {
       return {};
     }
   }
@@ -182,10 +183,10 @@ const args = computed(() => {
 });
 
 const searchArgs = computed(() => {
-  if (props.toolCalls && props.toolCalls.length > 0 && props.toolCalls[0]) {
+  if (props.toolCalls?.length > 0 && props.toolCalls[0]?.function?.arguments) {
     try {
-      return JSON.parse(props.toolCalls[0]?.function?.arguments || '{}');
-    } catch (e) {
+      return JSON.parse(props.toolCalls[0].function.arguments);
+    } catch {
       return {};
     }
   }
@@ -195,8 +196,8 @@ const searchArgs = computed(() => {
 const memoryItems = computed(() => {
   if (!isMemory.value) return [];
 
-  const tools = props.toolCalls && props.toolCalls.length > 0 
-    ? props.toolCalls 
+  const tools = props.toolCalls && props.toolCalls.length > 0
+    ? props.toolCalls
     : (props.toolCall ? [props.toolCall] : []);
 
   return tools.map(tool => {
@@ -344,24 +345,25 @@ const displayedStatus = computed(() => {
   return null;
 });
 
+// Parsed args for all tools in a group (cached)
+const parsedToolGroupArgs = computed(() => {
+  if (!isToolGroup.value || !props.toolCalls?.length) return [];
+  return props.toolCalls.map(tool => {
+    try {
+      return JSON.parse(tool?.function?.arguments || '{}');
+    } catch {
+      return {};
+    }
+  });
+});
+
 const formattedArgs = computed(() => {
   if (isToolGroup.value) {
-    if (isSearch.value) {
-      // For search groups, we typically don't show arguments, just the results
-      return '';
-    }
-    // For non-search tool groups, show all arguments combined
-    const allArgs = props.toolCalls.map(tool => {
-      try {
-        return JSON.parse(tool?.function?.arguments || '{}');
-      } catch (e) {
-        return {};
-      }
-    });
-    return JSON.stringify(allArgs, null, 2);
+    if (isSearch.value) return '';
+    return JSON.stringify(parsedToolGroupArgs.value, null, 2);
   }
 
-  // Single tool
+  // Single tool — reuse already-parsed args
   return JSON.stringify(args.value, null, 2);
 });
 
